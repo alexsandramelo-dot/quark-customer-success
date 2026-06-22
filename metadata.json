@@ -1,0 +1,6 @@
+{
+  "name": "QUARK Customer Success",
+  "description": "Plataforma de Customer Success da QUARK para monitoramento de uso e risco de churn.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
