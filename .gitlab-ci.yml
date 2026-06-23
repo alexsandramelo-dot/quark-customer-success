@@ -1,0 +1,141 @@
+stages:
+  - build
+  - image
+  - deploy
+
+variables:
+  HARBOR_PROJECT: "quarks/cs"
+  IMAGE_NAME: "${HARBOR_URL}/${HARBOR_PROJECT}/${CI_PROJECT_NAME}"
+
+  NAMESPACE: "quarks-cs"
+  DEPLOYMENT: "quark-customer-success"
+  CONTAINER: "quark-customer-success"
+
+  KUBECTL_VERSION: "v1.22.17"
+
+  NODE_VERSION: "22"
+
+default:
+  tags:
+    - docker
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+# =============================================================================
+# BUILD — npm ci + vite build
+# =============================================================================
+node:build:
+  stage: build
+  image:
+    name: node:${NODE_VERSION}-alpine
+    entrypoint: [""]
+  script:
+    - npm ci --prefer-offline
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    when: on_success
+    expire_in: 1 day
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-node-modules"
+    paths:
+      - node_modules/
+    policy: pull-push
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# =============================================================================
+# IMAGE — docker build + push to Harbor
+# =============================================================================
+container:image:
+  stage: image
+  image: docker:27.5.1-dind-alpine3.21
+  services:
+    - name: docker:27.5.1-dind-alpine3.21
+      alias: docker
+  variables:
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - |
+      echo "=== Waiting for Docker daemon ==="
+      for i in $(seq 1 30); do
+        docker info > /dev/null 2>&1 && break
+        [ "${i}" -eq 30 ] && echo "ERROR: Docker daemon not ready after 30s" && exit 1
+        sleep 1
+      done
+    - echo "${HARBOR_PASSWORD}" | docker login "${HARBOR_URL}" --username "${HARBOR_USER}" --password-stdin
+  script:
+    - |
+      echo "=== Building image: ${IMAGE_NAME}:${CI_PIPELINE_ID} ==="
+      docker build \
+        --pull \
+        --file Dockerfile \
+        --tag "${IMAGE_NAME}:${CI_PIPELINE_ID}" \
+        --tag "${IMAGE_NAME}:latest" \
+        .
+      echo "=== Pushing images ==="
+      docker push "${IMAGE_NAME}:${CI_PIPELINE_ID}"
+      docker push "${IMAGE_NAME}:latest"
+  after_script:
+    - docker image rm --force "${IMAGE_NAME}:${CI_PIPELINE_ID}" || true
+    - docker image rm --force "${IMAGE_NAME}:latest" || true
+  needs:
+    - job: node:build
+      artifacts: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# =============================================================================
+# DEPLOY — kubectl set image on k3s (using K3S_CREDENTIALS CI variable)
+# =============================================================================
+deploy:k3s:
+  stage: deploy
+  image:
+    name: rancher/kubectl:${KUBECTL_VERSION}
+    entrypoint: [""]
+  variables:
+    GIT_STRATEGY: none
+    DEPLOY_IMAGE: "${IMAGE_NAME}:${CI_PIPELINE_ID}"
+  before_script:
+    - mkdir -p /tmp/.kube
+    - echo "${K3S_CREDENTIALS}" | base64 -d > /tmp/.kube/config
+    - chmod 600 /tmp/.kube/config
+    - export KUBECONFIG="/tmp/.kube/config"
+  script:
+    - |
+      echo "========================================="
+      echo "  Deploying: ${CI_PROJECT_NAME}"
+      echo "  Namespace: ${NAMESPACE}"
+      echo "  Deployment: ${DEPLOYMENT}"
+      echo "  Image: ${DEPLOY_IMAGE}"
+      echo "========================================="
+
+      kubectl set image \
+        --namespace "${NAMESPACE}" \
+        deployment/"${DEPLOYMENT}" \
+        "${CONTAINER}=${DEPLOY_IMAGE}"
+
+      echo "=== Verifying rollout (timeout: 120s) ==="
+      kubectl rollout status \
+        --namespace "${NAMESPACE}" \
+        deployment/"${DEPLOYMENT}" \
+        --timeout=120s
+
+      echo "=== Current pod status ==="
+      kubectl get pods \
+        --namespace "${NAMESPACE}" \
+        -l app="${CONTAINER}" \
+        --no-headers
+  needs:
+    - job: container:image
+      artifacts: false
+  environment:
+    name: production
+    url: "https://customer-success.quark.tec.br/quark-customer-success"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
