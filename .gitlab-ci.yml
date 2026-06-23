@@ -46,29 +46,16 @@ node:build:
       - node_modules/
     policy: pull-push
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "producao"'
 
 # =============================================================================
 # IMAGE — docker build + push to Harbor
 # =============================================================================
 container:image:
   stage: image
-  image: docker:27.5.1-dind-alpine3.21
-  services:
-    - name: docker:27.5.1-dind-alpine3.21
-      alias: docker
-  variables:
-    DOCKER_HOST: "tcp://docker:2375"
-    DOCKER_TLS_CERTDIR: ""
+  image: docker:19.03.13-dind
   before_script:
-    - |
-      echo "=== Waiting for Docker daemon ==="
-      for i in $(seq 1 30); do
-        docker info > /dev/null 2>&1 && break
-        [ "${i}" -eq 30 ] && echo "ERROR: Docker daemon not ready after 30s" && exit 1
-        sleep 1
-      done
-    - echo "${HARBOR_PASSWORD}" | docker login "${HARBOR_URL}" --username "${HARBOR_USER}" --password-stdin
+    - docker login --username ${HARBOR_USER} --password ${HARBOR_PASSWORD} ${HARBOR_URL}
   script:
     - |
       echo "=== Building image: ${IMAGE_NAME}:${CI_PIPELINE_ID} ==="
@@ -88,7 +75,7 @@ container:image:
     - job: node:build
       artifacts: true
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "producao"'
 
 # =============================================================================
 # DEPLOY — kubectl set image on k3s (using K3S_CREDENTIALS CI variable)
@@ -138,4 +125,4 @@ deploy:k3s:
     name: production
     url: "https://customer-success.quark.tec.br/quark-customer-success"
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "producao"'
