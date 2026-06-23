@@ -11,7 +11,7 @@ variables:
   DEPLOYMENT: "quark-customer-success"
   CONTAINER: "quark-customer-success"
 
-  KUBECTL_VERSION: "v1.22.17"
+  KUBECTL_VERSION: "v1.22.16"
 
   NODE_VERSION: "22"
 
@@ -83,41 +83,18 @@ container:image:
 deploy:k3s:
   stage: deploy
   image:
-    name: rancher/kubectl:${KUBECTL_VERSION}
+    name: lachlanevenson/k8s-kubectl:${KUBECTL_VERSION}
     entrypoint: [""]
   variables:
     GIT_STRATEGY: none
     DEPLOY_IMAGE: "${IMAGE_NAME}:${CI_PIPELINE_ID}"
   before_script:
-    - mkdir -p /tmp/.kube
-    - echo "${K3S_CREDENTIALS}" | base64 -d > /tmp/.kube/config
-    - chmod 600 /tmp/.kube/config
-    - export KUBECONFIG="/tmp/.kube/config"
+    - (apk add --no-cache coreutils || (apt-get update && apt-get install -y coreutils) || yum install -y coreutils) >/dev/null 2>&1
+    - echo ${K3S_CREDENTIALS} | base64 -di > kubeconfig
+    - export KUBECONFIG="kubeconfig"
   script:
-    - |
-      echo "========================================="
-      echo "  Deploying: ${CI_PROJECT_NAME}"
-      echo "  Namespace: ${NAMESPACE}"
-      echo "  Deployment: ${DEPLOYMENT}"
-      echo "  Image: ${DEPLOY_IMAGE}"
-      echo "========================================="
+    - kubectl set image --namespace ${NAMESPACE} deployment/${DEPLOYMENT} ${CONTAINER}=${IMAGE_NAME}:${CI_PIPELINE_ID} --record
 
-      kubectl set image \
-        --namespace "${NAMESPACE}" \
-        deployment/"${DEPLOYMENT}" \
-        "${CONTAINER}=${DEPLOY_IMAGE}"
-
-      echo "=== Verifying rollout (timeout: 120s) ==="
-      kubectl rollout status \
-        --namespace "${NAMESPACE}" \
-        deployment/"${DEPLOYMENT}" \
-        --timeout=120s
-
-      echo "=== Current pod status ==="
-      kubectl get pods \
-        --namespace "${NAMESPACE}" \
-        -l app="${CONTAINER}" \
-        --no-headers
   needs:
     - job: container:image
       artifacts: false
