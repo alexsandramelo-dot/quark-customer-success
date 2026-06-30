@@ -12,6 +12,8 @@ import {
   REFERENCE_DATE,
   parseCSVAtividades,
   parseCSVVariaveis,
+  parseCSVAtividadesAsync,
+  parseCSVVariaveisAsync,
   gerarTemplateCSVAtividades,
   gerarTemplateCSVVariaveis
 } from "./data";
@@ -48,6 +50,8 @@ import {
 
 const URL_ATIVIDADES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSMh99jhArJdw6BnE55fjmp87zdxW-VURfhbUYXbKmD5mja9DlcHqDO4Ir4E8s4P2C2tEQ4PZmrt3cM/pub?output=csv";
 const URL_VARIAVEIS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRC16StwXjAuc6JWvnw4VdXyTr-9YVJd11819TQ45AWdcqmITm43OptmfOHx6jfKib1ZUiqZB_CYLSa/pub?output=csv";
+const MAX_LOCAL_CACHE_CHARS = 5_000_000;
+const LOCAL_CACHE_VERSION = "2";
 
 export default function App() {
   // State for raw tables
@@ -55,7 +59,7 @@ export default function App() {
   const [variaveis, setVariaveis] = useState<VariavelCSV[]>(DEFAULT_VARIAVEIS);
 
   // Sync state for Google Sheets
-  const [loadingStatus, setLoadingStatus] = useState<"loading" | "success" | "error" | "offline-cache" | "idle">("idle");
+  const [loadingStatus, setLoadingStatus] = useState<"loading" | "success" | "error" | "offline-cache" | "local" | "idle">("idle");
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -74,6 +78,7 @@ export default function App() {
   
   // Mobile sidebar menu toggle
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Fast direct local spreadsheet load state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -125,8 +130,8 @@ export default function App() {
 
       // Save to localStorage for robust caching inside a nested try-catch to prevent QuotaExceededError from crashing the sync
       try {
-        localStorage.setItem("quark_csv_atividades", textAtiv);
-        localStorage.setItem("quark_csv_variaveis", textVar);
+        cacheCSVIfSmall("quark_csv_atividades", textAtiv);
+        cacheCSVIfSmall("quark_csv_variaveis", textVar);
         localStorage.setItem("quark_csv_timestamp", timestamp);
       } catch (cacheErr: any) {
         console.error("Falhas de cache ao tentar gravar dados locais:", cacheErr);
@@ -155,6 +160,13 @@ export default function App() {
 
       if (cachedAtiv && cachedVar) {
         try {
+          if (cachedAtiv.length > MAX_LOCAL_CACHE_CHARS || cachedVar.length > MAX_LOCAL_CACHE_CHARS) {
+            localStorage.removeItem("quark_csv_atividades");
+            localStorage.removeItem("quark_csv_variaveis");
+            localStorage.removeItem("quark_csv_timestamp");
+            throw new Error("Cache local grande demais para carregar após falha de sincronização.");
+          }
+
           const parsedAtividades = parseCSVAtividades(cachedAtiv);
           const parsedVariaveis = parseCSVVariaveis(cachedVar);
 
@@ -183,10 +195,24 @@ export default function App() {
 
   // Auto trigger instant load from local Cache OR optimized demo dataset
   useEffect(() => {
+    setAtividades(DEFAULT_ATIVIDADES);
+    setVariaveis(DEFAULT_VARIAVEIS);
+    setLastUpdate("Original");
+    setLoadingStatus("idle");
+    return;
+
     let cachedAtiv = null;
     let cachedVar = null;
     let cachedTime = null;
     try {
+      const cacheVersion = localStorage.getItem("quark_csv_cache_version");
+      if (cacheVersion !== LOCAL_CACHE_VERSION) {
+        localStorage.removeItem("quark_csv_atividades");
+        localStorage.removeItem("quark_csv_variaveis");
+        localStorage.removeItem("quark_csv_timestamp");
+        localStorage.setItem("quark_csv_cache_version", LOCAL_CACHE_VERSION);
+      }
+
       cachedAtiv = localStorage.getItem("quark_csv_atividades");
       cachedVar = localStorage.getItem("quark_csv_variaveis");
       cachedTime = localStorage.getItem("quark_csv_timestamp");
@@ -196,6 +222,13 @@ export default function App() {
 
     if (cachedAtiv && cachedVar) {
       try {
+        if (cachedAtiv.length > MAX_LOCAL_CACHE_CHARS || cachedVar.length > MAX_LOCAL_CACHE_CHARS) {
+          localStorage.removeItem("quark_csv_atividades");
+          localStorage.removeItem("quark_csv_variaveis");
+          localStorage.removeItem("quark_csv_timestamp");
+          throw new Error("Cache local grande demais para carregar na inicialização.");
+        }
+
         const parsedAtividades = parseCSVAtividades(cachedAtiv);
         const parsedVariaveis = parseCSVVariaveis(cachedVar);
 
@@ -203,7 +236,7 @@ export default function App() {
           setAtividades(parsedAtividades);
           setVariaveis(parsedVariaveis);
           setLastUpdate(cachedTime);
-          setLoadingStatus("offline-cache");
+          setLoadingStatus("local");
           return;
         }
       } catch (e: any) {
@@ -259,21 +292,28 @@ export default function App() {
   // Direct CSV Local upload state helpers
   const [rawAtividadesText, setRawAtividadesText] = useState<string | null>(null);
   const [rawVariaveisText, setRawVariaveisText] = useState<string | null>(null);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   const parseAtividadesFile = (file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
-        const parsed = parseCSVAtividades(text);
+        setModalError("Processando planilha de atividades...");
+        const parsed = await parseCSVAtividadesAsync(text);
         if (parsed.length === 0) {
           setModalError("Arquivo de atividades vazio ou em formato incompatível.");
           return;
         }
+        setAtividades(parsed);
+        cacheCSVIfSmall("quark_csv_atividades", text);
+        markLocalDataUpdated();
         setUploadedAtividades(parsed);
         setRawAtividadesText(text);
         setAtivFileName(file.name);
         setModalError(null);
+        triggerGlobalNotification(`Atividades sincronizadas automaticamente: ${parsed.length} registros importados.`);
       } catch (err) {
         setModalError("Erro ao processar arquivo de atividades.");
       }
@@ -283,18 +323,23 @@ export default function App() {
 
   const parseVariaveisFile = (file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const text = e.target?.result as string;
-        const parsed = parseCSVVariaveis(text);
+        setModalError("Processando planilha de clientes...");
+        const parsed = await parseCSVVariaveisAsync(text);
         if (parsed.length === 0) {
           setModalError("Arquivo de variáveis vazio ou em formato incompatível.");
           return;
         }
+        setVariaveis(parsed);
+        cacheCSVIfSmall("quark_csv_variaveis", text);
+        markLocalDataUpdated();
         setUploadedVariaveis(parsed);
         setRawVariaveisText(text);
         setVarFileName(file.name);
         setModalError(null);
+        triggerGlobalNotification(`Clientes sincronizados automaticamente: ${parsed.length} registros importados.`);
       } catch (err) {
         setModalError("Erro ao processar arquivo de variáveis.");
       }
@@ -303,30 +348,17 @@ export default function App() {
   };
 
   const handleApplyUploadedFiles = () => {
-    if (!uploadedAtividades && !uploadedVariaveis) {
-      setModalError("Por favor, selecione pelo menos uma planilha para carregar.");
-      return;
-    }
-    
-    if (uploadedAtividades && rawAtividadesText) {
-      setAtividades(uploadedAtividades);
-      try { localStorage.setItem("quark_csv_atividades", rawAtividadesText); } catch(e){}
-    }
-    if (uploadedVariaveis && rawVariaveisText) {
-      setVariaveis(uploadedVariaveis);
-      try { localStorage.setItem("quark_csv_variaveis", rawVariaveisText); } catch(e){}
-    }
-
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setUploadedAtividades(null);
+    setUploadedVariaveis(null);
+    setRawAtividadesText(null);
+    setRawVariaveisText(null);
+    setAtivFileName(null);
+    setVarFileName(null);
+    setModalError(null);
+    setShowUploadModal(false);
+    return;
     const timestamp = `${now.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} às ${timeStr}`;
-    setLastUpdate(timestamp);
-    setLoadingStatus("offline-cache");
-    try { localStorage.setItem("quark_csv_timestamp", timestamp); } catch(e){}
-
     triggerGlobalNotification("Planilhas CSV carregadas e métricas de CS recalculadas instantaneamente!");
-    
-    // Reset state values
     setUploadedAtividades(null);
     setUploadedVariaveis(null);
     setRawAtividadesText(null);
@@ -350,15 +382,44 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // Operations
-  const handleImportAtividades = (data: AtividadeCSV[]) => {
-    setAtividades(data);
-    triggerGlobalNotification(`Sincronizadas ${data.length} novas atividades de uso de QuarkRH & QuarkClinic.`);
+  const markLocalDataUpdated = () => {
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timestamp = `${now.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} às ${timeStr}`;
+    setLastUpdate(timestamp);
+    setLoadingStatus("local");
+    setResolvedIndicators([]);
+    try { localStorage.setItem("quark_csv_timestamp", timestamp); } catch(e){}
   };
 
-  const handleImportVariaveis = (data: VariavelCSV[]) => {
+  const cacheCSVIfSmall = (key: string, text: string) => {
+    if (text.length > MAX_LOCAL_CACHE_CHARS) return false;
+    try {
+      localStorage.setItem(key, text);
+      localStorage.setItem("quark_csv_cache_version", LOCAL_CACHE_VERSION);
+      return true;
+    } catch(e) {
+      return false;
+    }
+  };
+
+  // Operations
+  const handleImportAtividades = (data: AtividadeCSV[], rawText?: string) => {
+    setAtividades(data);
+    if (rawText) {
+      cacheCSVIfSmall("quark_csv_atividades", rawText);
+    }
+    markLocalDataUpdated();
+    triggerGlobalNotification(`Sincronizadas ${data.length} novas atividades de uso e dashboards recalculados.`);
+  };
+
+  const handleImportVariaveis = (data: VariavelCSV[], rawText?: string) => {
     setVariaveis(data);
-    triggerGlobalNotification(`Registrados ${data.length} de contas comerciais contratadas com MRR.`);
+    if (rawText) {
+      cacheCSVIfSmall("quark_csv_variaveis", rawText);
+    }
+    markLocalDataUpdated();
+    triggerGlobalNotification(`Registradas ${data.length} contas comerciais e dashboards recalculados.`);
   };
 
   const handleResetDatabase = () => {
@@ -407,31 +468,42 @@ export default function App() {
       )}
 
       {/* PERSISTENT LEFT SIDEBAR - Desktop Mode */}
-      <aside className="hidden lg:flex w-64 bg-slate-950 text-slate-200 flex-col justify-between border-r border-slate-800 p-6 flex-shrink-0">
+      <aside className={`hidden lg:flex bg-slate-950 text-slate-200 flex-col justify-between border-r border-slate-800 flex-shrink-0 transition-all duration-200 ${
+        sidebarCollapsed ? "w-20 p-4" : "w-64 p-6"
+      }`}>
         <div>
           {/* Logo badge */}
-          <div className="flex items-center gap-3 mb-10 pb-4 border-b border-slate-900">
+          <div className={`flex items-center gap-3 mb-10 pb-4 border-b border-slate-900 ${sidebarCollapsed ? "justify-center" : ""}`}>
             <div className="w-8 h-8 rounded bg-gradient-to-tr from-emerald-400 to-indigo-500 flex items-center justify-center font-black text-white text-base">
               Q
             </div>
-            <div>
+            {!sidebarCollapsed && <div>
               <span className="font-extrabold text-sm tracking-widest text-white block">QUARK</span>
               <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">Customer Success</span>
-            </div>
+            </div>}
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              title={sidebarCollapsed ? "Expandir sidebar" : "Recolher sidebar"}
+              className={`p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-900 transition-colors ${sidebarCollapsed ? "mx-auto" : "ml-auto"}`}
+            >
+              <Menu className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Navigation link stacks */}
-          <nav className="space-y-1.5">
+          <nav className={`space-y-1.5 ${sidebarCollapsed ? "[&_button]:justify-center [&_button]:px-0 [&_button_span]:hidden" : ""}`}>
             <button
               onClick={() => handleNavigate("Geral")}
-              className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-lg text-xs font-bold transition-all text-left group ${
+              title="Dashboard Executivo"
+              className={`w-full flex items-center gap-3.5 py-3 rounded-lg text-xs font-bold transition-all text-left group ${sidebarCollapsed ? "justify-center px-0" : "px-4"} ${
                 selectedView === "Geral" 
                   ? "bg-emerald-500 text-slate-950 font-black shadow-md shadow-emerald-500/10" 
                   : "text-slate-400 hover:text-white hover:bg-slate-900"
               }`}
             >
               <BarChart4 className="w-4 h-4 flex-shrink-0" />
-              <span>Dashboard Executivo</span>
+              {!sidebarCollapsed && <span>Dashboard Executivo</span>}
             </button>
 
             <button
@@ -492,19 +564,19 @@ export default function App() {
         </div>
 
         {/* Persistent Workspace Operator block */}
-        <div className="border-t border-slate-900 pt-5">
-          <div className="flex items-center gap-3 mb-4">
+        <div className={`border-t border-slate-900 pt-5 ${sidebarCollapsed ? "flex flex-col items-center" : ""}`}>
+          <div className={`flex items-center gap-3 mb-4 ${sidebarCollapsed ? "justify-center" : ""}`}>
             <div className="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center font-extrabold text-white text-xs">
               RS
             </div>
-            <div>
-              <p className="text-xs font-black text-white">Ricardo Silva</p>
+            {!sidebarCollapsed && <div>
+              <p className="text-xs font-black text-white">Admin</p>
               <p className="text-[10px] text-slate-400 font-bold">Head of Success</p>
-            </div>
+            </div>}
           </div>
           <button 
             onClick={() => triggerGlobalNotification("Simulador de logout concluído: sessão persistente preservada.")}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-[11px] font-bold text-slate-400 hover:text-white transition-colors"
+            className={`w-full items-center gap-2 px-3 py-1.5 rounded text-[11px] font-bold text-slate-400 hover:text-white transition-colors ${sidebarCollapsed ? "hidden" : "flex"}`}
           >
             <LogOut className="w-3.5 h-3.5" />
             <span>Encerrar Sessão</span>
@@ -646,12 +718,14 @@ export default function App() {
                   <span className={`w-2 h-2 rounded-full ${
                     loadingStatus === "success" ? "bg-emerald-500 animate-pulse" :
                     loadingStatus === "loading" ? "bg-indigo-500 animate-bounce" :
+                    loadingStatus === "local" ? "bg-emerald-500" :
                     loadingStatus === "offline-cache" ? "bg-amber-500" :
                     "bg-rose-500"
                   }`} />
                   <span className="text-[9px] font-black text-slate-800 uppercase tracking-widest leading-none">
                     {loadingStatus === "success" ? "Publicado" :
                      loadingStatus === "loading" ? "Carregando" :
+                     loadingStatus === "local" ? "Importado" :
                      loadingStatus === "offline-cache" ? "Offline" :
                      "Demonstração"}
                   </span>
@@ -941,7 +1015,7 @@ export default function App() {
                 id="apply-upload-btn"
               >
                 <CheckCircle className="w-4 h-4" />
-                Aplicar e Recalcular
+                Concluir
               </button>
             </div>
           </div>

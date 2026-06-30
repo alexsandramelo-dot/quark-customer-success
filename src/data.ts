@@ -130,30 +130,55 @@ export function calcularMétricasEHealthScore(
     return [];
   }
   const safeAtividades = Array.isArray(atividades) ? atividades : [];
+  const atividadesByClientProduct = new Map<string, AtividadeCSV[]>();
+  const atividadesByClient = new Map<string, AtividadeCSV[]>();
+
+  for (const atividade of safeAtividades) {
+    const clientId = (atividade?.cliente_id || "").trim();
+    if (!clientId) continue;
+
+    const product = (atividade?.produto || "").trim().toLowerCase();
+    const clientBucket = atividadesByClient.get(clientId) || [];
+    clientBucket.push(atividade);
+    atividadesByClient.set(clientId, clientBucket);
+
+    if (product) {
+      const productKey = `${clientId}|||${product}`;
+      const productBucket = atividadesByClientProduct.get(productKey) || [];
+      productBucket.push(atividade);
+      atividadesByClientProduct.set(productKey, productBucket);
+    }
+  }
+
+  const sortByMostRecent = (items: AtividadeCSV[]) => {
+    items.sort((a, b) => {
+      const tA = a && a.data ? new Date(a.data).getTime() : 0;
+      const tB = b && b.data ? new Date(b.data).getTime() : 0;
+      const valA = isNaN(tA) ? 0 : tA;
+      const valB = isNaN(tB) ? 0 : tB;
+      return valB - valA;
+    });
+  };
+
+  atividadesByClient.forEach(sortByMostRecent);
+  atividadesByClientProduct.forEach(sortByMostRecent);
 
   return variaveis.map((v) => {
     try {
       // Filter activities for this client & product
-      const clientAct = safeAtividades.filter(
-        (a) => (a?.cliente_id || "").trim() === (v?.id || "").trim() && 
-               (a?.produto || "").trim().toLowerCase() === (v?.codigo || "").trim().toLowerCase()
-      );
+      const clientId = (v?.id || "").trim();
+      const clientProduct = (v?.codigo || "").trim().toLowerCase();
+      const clientAct = clientProduct
+        ? atividadesByClientProduct.get(`${clientId}|||${clientProduct}`) || atividadesByClient.get(clientId) || []
+        : atividadesByClient.get(clientId) || [];
 
       // Latest activity
       let latestAct: AtividadeCSV | undefined;
       let prevAct: AtividadeCSV | undefined;
 
       if (clientAct.length > 0) {
-        // Sort activities descending by date
-        const sorted = [...clientAct].sort((a, b) => {
-          const tA = a && a.data ? new Date(a.data).getTime() : 0;
-          const tB = b && b.data ? new Date(b.data).getTime() : 0;
-          const valA = isNaN(tA) ? 0 : tA;
-          const valB = isNaN(tB) ? 0 : tB;
-          return valB - valA;
-        });
-        latestAct = sorted[0];
-        prevAct = sorted[1];
+        latestAct = clientAct[0];
+        prevAct = clientAct[1];
       }
 
       const variables_used = v?.variavel_codigo
@@ -238,6 +263,7 @@ export function calcularMétricasEHealthScore(
       if (isNaN(health_score) || !isFinite(health_score)) {
         health_score = 50;
       }
+      health_score = Math.max(0, Math.min(100, health_score));
 
       // Classificação
       let classificacao: "Saudável" | "Atenção" | "Risco" = "Atenção";
@@ -370,6 +396,32 @@ export function detectDelimiter(line: string): string {
   return semicolons > commas ? ";" : ",";
 }
 
+function normalizeHeader(value: string): string {
+  return value
+    .replace(/^\uFEFF/, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function cleanCSVCell(value: string | undefined): string {
+  return (value || "").replace(/^\uFEFF/, "").replace(/^["']|["']$/g, "").trim();
+}
+
+function parseCSVNumber(value: string | undefined, fallback = 0): number {
+  const cleaned = cleanCSVCell(value)
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\.(?=\d{3}(?:\D|$))/g, "")
+    .replace(",", ".");
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function inferProductFromId(id: string): "QuarkRH" | "QuarkClinic" {
+  return id.trim().toUpperCase().startsWith("QC-") ? "QuarkClinic" : "QuarkRH";
+}
+
 // A simple CSV line parser that respects quotes and custom delimiter
 export function parseCSVLine(line: string, delimiter: string = ","): string[] {
   const result: string[] = [];
@@ -400,7 +452,7 @@ export function parseCSVAtividades(text: string): AtividadeCSV[] {
     }
     
     const delimiter = detectDelimiter(lines[0]);
-    const header = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim());
+    const header = parseCSVLine(lines[0], delimiter).map(normalizeHeader);
     const idxId = header.findIndex(h => h === "cliente_id" || h.includes("cliente_id") || h === "id" || h.includes("id_cliente"));
     const idxProd = header.findIndex(h => h.includes("produto") || h.includes("codigo") || h === "prod" || h === "produto");
     const idxData = header.findIndex(h => h.includes("data") || h === "date");
@@ -411,15 +463,15 @@ export function parseCSVAtividades(text: string): AtividadeCSV[] {
     const list: AtividadeCSV[] = [];
     for (let i = 1; i < lines.length; i++) {
       try {
-        const cols = parseCSVLine(lines[i], delimiter).map(c => c.replace(/^["']|["']$/g, "").trim());
+        const cols = parseCSVLine(lines[i], delimiter).map(cleanCSVCell);
         if (cols.length < 3) continue;
 
         const cliente_id = cols[idxId !== -1 ? idxId : 0] || "";
-        const produto = cols[idxProd !== -1 ? idxProd : 1] || "QuarkRH";
+        const produto = (idxProd !== -1 ? cols[idxProd] : "") || inferProductFromId(cliente_id);
         const data = cols[idxData !== -1 ? idxData : 2] || REFERENCE_DATE;
-        const requisicoes = parseInt(cols[idxReq !== -1 ? idxReq : 3] || "0", 10);
-        const usuarios_ativos = parseInt(cols[idxAct !== -1 ? idxAct : 4] || "0", 10);
-        const usuarios_totais = parseInt(cols[idxTot !== -1 ? idxTot : 5] || "100", 10);
+        const requisicoes = parseCSVNumber(cols[idxReq !== -1 ? idxReq : 3], 0);
+        const usuarios_ativos = parseCSVNumber(cols[idxAct !== -1 ? idxAct : 4], 0);
+        const usuarios_totais = parseCSVNumber(cols[idxTot !== -1 ? idxTot : 5], 100);
 
         list.push({
           cliente_id,
@@ -452,7 +504,7 @@ export function parseCSVVariaveis(text: string): VariavelCSV[] {
     }
 
     const delimiter = detectDelimiter(lines[0]);
-    const headers = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim());
+    const headers = parseCSVLine(lines[0], delimiter).map(normalizeHeader);
     
     const idxId = headers.findIndex(h => h === "id" || h === "cliente_id" || h.includes("id"));
     const idxProd = headers.findIndex(h => h === "codigo" || h === "produto" || h === "prod");
@@ -465,16 +517,16 @@ export function parseCSVVariaveis(text: string): VariavelCSV[] {
     const list: VariavelCSV[] = [];
     for (let i = 1; i < lines.length; i++) {
       try {
-        const cols = parseCSVLine(lines[i], delimiter);
+        const cols = parseCSVLine(lines[i], delimiter).map(cleanCSVCell);
         if (cols.length < 3) continue;
 
         const id = cols[idxId !== -1 ? idxId : 0] || "";
-        const codigo = cols[idxProd !== -1 ? idxProd : 1] || "QuarkRH";
+        const codigo = (idxProd !== -1 ? cols[idxProd] : "") || inferProductFromId(id);
         const nome_cliente = cols[idxNome !== -1 ? idxNome : 2] || "Cliente Importado";
         const plano = cols[idxPlano !== -1 ? idxPlano : 3] || "Enterprise Plan";
-        const mrr = parseFloat(cols[idxMrr !== -1 ? idxMrr : 4] || "0");
+        const mrr = parseCSVNumber(cols[idxMrr !== -1 ? idxMrr : 4], 0);
         const variavel_codigo = cols[idxVar !== -1 ? idxVar : 5] || "";
-        const total_variaveis = parseInt(cols[idxTot !== -1 ? idxTot : 6] || "10", 10);
+        const total_variaveis = parseCSVNumber(cols[idxTot !== -1 ? idxTot : 6], 10);
 
         list.push({
           id,
@@ -494,6 +546,94 @@ export function parseCSVVariaveis(text: string): VariavelCSV[] {
     return list;
   } catch (err: any) {
     console.error("Erros de parsing gerais ao processar CSV de Variáveis:", err);
+    return [];
+  }
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export async function parseCSVAtividadesAsync(text: string, chunkSize = 1000): Promise<AtividadeCSV[]> {
+  try {
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length <= 1) return [];
+
+    const delimiter = detectDelimiter(lines[0]);
+    const header = parseCSVLine(lines[0], delimiter).map(normalizeHeader);
+    const idxId = header.findIndex(h => h === "cliente_id" || h.includes("cliente_id") || h === "id" || h.includes("id_cliente"));
+    const idxProd = header.findIndex(h => h.includes("produto") || h.includes("codigo") || h === "prod" || h === "produto");
+    const idxData = header.findIndex(h => h.includes("data") || h === "date");
+    const idxReq = header.findIndex(h => h.includes("requisicoes") || h.includes("req") || h.includes("requisicao") || h.includes("requests"));
+    const idxAct = header.findIndex(h => h.includes("usuarios_ativos") || h.includes("ativos") || h.includes("active"));
+    const idxTot = header.findIndex(h => h.includes("usuarios_totais") || h.includes("totais") || h.includes("total_usuarios") || h.includes("total"));
+
+    const list: AtividadeCSV[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i], delimiter).map(cleanCSVCell);
+      if (cols.length >= 3) {
+        const cliente_id = cols[idxId !== -1 ? idxId : 0] || "";
+        list.push({
+          cliente_id,
+          produto: (idxProd !== -1 ? cols[idxProd] : "") || inferProductFromId(cliente_id),
+          data: cols[idxData !== -1 ? idxData : 2] || REFERENCE_DATE,
+          requisicoes: parseCSVNumber(cols[idxReq !== -1 ? idxReq : 3], 0),
+          usuarios_ativos: parseCSVNumber(cols[idxAct !== -1 ? idxAct : 4], 0),
+          usuarios_totais: parseCSVNumber(cols[idxTot !== -1 ? idxTot : 5], 100)
+        });
+      }
+
+      if (i % chunkSize === 0) {
+        await yieldToBrowser();
+      }
+    }
+
+    return list;
+  } catch (err: any) {
+    console.error("Erros de parsing assíncrono ao processar CSV de Atividades:", err);
+    return [];
+  }
+}
+
+export async function parseCSVVariaveisAsync(text: string, chunkSize = 1000): Promise<VariavelCSV[]> {
+  try {
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length <= 1) return [];
+
+    const delimiter = detectDelimiter(lines[0]);
+    const headers = parseCSVLine(lines[0], delimiter).map(normalizeHeader);
+    const idxId = headers.findIndex(h => h === "id" || h === "cliente_id" || h.includes("id"));
+    const idxProd = headers.findIndex(h => h === "codigo" || h === "produto" || h === "prod");
+    const idxNome = headers.findIndex(h => h.includes("nome_cliente") || h.includes("cliente") || h.includes("nome"));
+    const idxPlano = headers.findIndex(h => h.includes("plano") || h === "plan");
+    const idxMrr = headers.findIndex(h => h.includes("mrr") || h.includes("receita"));
+    const idxVar = headers.findIndex(h => h.includes("variavel_codigo") || h.includes("variaveis") || h.includes("variavel_codigos"));
+    const idxTot = headers.findIndex(h => h.includes("total_variaveis") || h.includes("total") || h.includes("total_vars"));
+
+    const list: VariavelCSV[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i], delimiter).map(cleanCSVCell);
+      if (cols.length >= 3) {
+        const id = cols[idxId !== -1 ? idxId : 0] || "";
+        list.push({
+          id,
+          codigo: (idxProd !== -1 ? cols[idxProd] : "") || inferProductFromId(id),
+          nome_cliente: cols[idxNome !== -1 ? idxNome : 2] || "Cliente Importado",
+          plano: cols[idxPlano !== -1 ? idxPlano : 3] || "Enterprise Plan",
+          mrr: parseCSVNumber(cols[idxMrr !== -1 ? idxMrr : 4], 0),
+          variavel_codigo: cols[idxVar !== -1 ? idxVar : 5] || "",
+          total_variaveis: parseCSVNumber(cols[idxTot !== -1 ? idxTot : 6], 10)
+        });
+      }
+
+      if (i % chunkSize === 0) {
+        await yieldToBrowser();
+      }
+    }
+
+    return list;
+  } catch (err: any) {
+    console.error("Erros de parsing assíncrono ao processar CSV de Variáveis:", err);
     return [];
   }
 }

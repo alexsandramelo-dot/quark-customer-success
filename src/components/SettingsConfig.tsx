@@ -5,12 +5,12 @@
 
 import React, { useState } from "react";
 import { AtividadeCSV, VariavelCSV, Cliente } from "../types";
-import { parseCSVAtividades, parseCSVVariaveis, gerarTemplateCSVAtividades, gerarTemplateCSVVariaveis } from "../data";
+import { parseCSVAtividadesAsync, parseCSVVariaveisAsync, gerarTemplateCSVAtividades, gerarTemplateCSVVariaveis } from "../data";
 import { Download, UploadCloud, RefreshCw, Plus, CheckCircle, AlertOctagon, HelpCircle } from "lucide-react";
 
 interface SettingsConfigProps {
-  onImportAtividades: (data: AtividadeCSV[]) => void;
-  onImportVariaveis: (data: VariavelCSV[]) => void;
+  onImportAtividades: (data: AtividadeCSV[], rawText?: string) => void;
+  onImportVariaveis: (data: VariavelCSV[], rawText?: string) => void;
   onResetDatabase: () => void;
   onAddClientManual: (newC: VariavelCSV, initialAct: AtividadeCSV) => void;
 }
@@ -61,15 +61,16 @@ export default function SettingsConfig({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const parsed = parseCSVAtividades(text);
+        setAtividadesStatus("Processando planilha de atividades...");
+        const parsed = await parseCSVAtividadesAsync(text);
         if (parsed.length === 0) {
           setAtividadesStatus("Erro: Arquivo vazio ou sem colunas compatíveis.");
           return;
         }
-        onImportAtividades(parsed);
+        onImportAtividades(parsed, text);
         setAtividadesStatus(`Sucesso: ${parsed.length} registros de atividades importados!`);
       } catch (err) {
         setAtividadesStatus("Erro ao processar as colunas do CSV.");
@@ -83,15 +84,16 @@ export default function SettingsConfig({
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const text = event.target?.result as string;
-        const parsed = parseCSVVariaveis(text);
+        setVariaveisStatus("Processando planilha de clientes...");
+        const parsed = await parseCSVVariaveisAsync(text);
         if (parsed.length === 0) {
           setVariaveisStatus("Erro: Arquivo vazio ou sem cabeçalhos de variáveis.");
           return;
         }
-        onImportVariaveis(parsed);
+        onImportVariaveis(parsed, text);
         setVariaveisStatus(`Sucesso: ${parsed.length} registros de clientes importados!`);
       } catch (err) {
         setVariaveisStatus("Erro ao ler cabeçalhos.");

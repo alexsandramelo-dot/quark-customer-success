@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo } from "react";
 import { Cliente } from "../types";
-import { ArrowUpRight, ArrowDownRight, Users, AlertTriangle, Flame, Heart, TrendingUp, HelpCircle, Bell } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Users, AlertTriangle, Flame, Heart, TrendingUp, HelpCircle, Bell, Check } from "lucide-react";
 // No Recharts dependencies needed - custom native SVG graphs prevent React 19 blackscreen crashes
 interface ChartPoint {
   name: string;
@@ -401,18 +401,22 @@ export default function ExecutiveDashboard({
           <h1 className="text-3xl font-bold tracking-tight text-on-surface">Dashboard Executivo</h1>
           <p className="text-body-md text-on-surface-variant">Visão consolidada da saúde e retenção de sua base de clientes.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <div className="flex bg-white rounded-lg p-1 shadow-sm border border-outline-variant">
+        <div className="flex flex-wrap items-center justify-start md:justify-end gap-2">
+          <div className="grid grid-cols-3 gap-0.5 bg-white rounded-lg p-0.5 shadow-sm border border-outline-variant w-[330px] max-w-full" role="tablist" aria-label="Filtro de sistema">
             {(["Geral", "QuarkRH", "QuarkClinic"] as const).map((prod) => (
               <button
                 key={prod}
+                type="button"
+                role="tab"
+                aria-selected={selectedProduct === prod}
                 onClick={() => setSelectedProduct(prod)}
-                className={`px-4 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                className={`h-[38px] px-3 rounded-md text-xs font-bold transition-all flex items-center justify-center gap-1.5 border ${
                   selectedProduct === prod
-                    ? "bg-primary text-white"
-                    : "text-on-surface-variant hover:bg-surface-container"
+                    ? "bg-emerald-50 text-slate-950 border-emerald-500 shadow-inner"
+                    : "bg-white text-slate-600 border-transparent hover:bg-slate-50 hover:text-slate-950"
                 }`}
               >
+                {selectedProduct === prod && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                 {prod}
               </button>
             ))}
@@ -443,7 +447,7 @@ export default function ExecutiveDashboard({
             <Users className="text-primary w-5 h-5" />
           </div>
           <div>
-            <div className="text-3xl font-bold text-on-surface">{totalClientes}</div>
+            <div className="text-[clamp(1.75rem,1.9vw,2.25rem)] leading-none font-bold text-on-surface tabular-nums max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{totalClientes}</div>
             <div className="text-xs text-secondary flex items-center gap-1 mt-2 font-medium">
               <span className="text-[10px]">▲</span>
               <span>+4.2% este mês</span>
@@ -461,7 +465,7 @@ export default function ExecutiveDashboard({
             <AlertTriangle className="text-amber-500 w-5 h-5" />
           </div>
           <div>
-            <div className="text-3xl font-bold text-on-surface">{clientesEmRisco}</div>
+            <div className="text-[clamp(1.75rem,1.9vw,2.25rem)] leading-none font-bold text-on-surface tabular-nums max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{clientesEmRisco}</div>
             <div className="text-xs text-error flex items-center gap-1 mt-2 font-medium">
               <span className="text-[10px]">▲</span>
               <span>+12 vs outubro</span>
@@ -479,7 +483,7 @@ export default function ExecutiveDashboard({
             <Flame className="text-error w-5 h-5" />
           </div>
           <div>
-            <div className="text-3xl font-bold text-on-surface">{clientesCriticos}</div>
+            <div className="text-[clamp(1.75rem,1.9vw,2.25rem)] leading-none font-bold text-on-surface tabular-nums max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{clientesCriticos}</div>
             <div className="text-xs text-secondary flex items-center gap-1 mt-2 font-medium">
               <span className="text-[10px]">▼</span>
               <span>-2 vs outubro</span>
@@ -494,13 +498,13 @@ export default function ExecutiveDashboard({
             <Heart className="text-secondary w-5 h-5" />
           </div>
           <div>
-            <div className="text-3xl font-bold text-on-surface">{avgHealthScore}/100</div>
+            <div className="text-[clamp(1.75rem,1.9vw,2.25rem)] leading-none font-bold text-on-surface tabular-nums max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{avgHealthScore}/100</div>
             <div className="w-full bg-surface-container rounded-full h-1.5 mt-3 overflow-hidden">
               <div 
                 className={`h-full rounded-full transition-all duration-500 ${
                   avgHealthScore >= 80 ? "bg-secondary" : avgHealthScore >= 60 ? "bg-amber-500" : "bg-error"
                 }`}
-                style={{ width: `${avgHealthScore}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, avgHealthScore))}%` }}
               ></div>
             </div>
           </div>
@@ -513,7 +517,7 @@ export default function ExecutiveDashboard({
             <TrendingUp className="text-primary-container w-5 h-5" />
           </div>
           <div>
-            <div className="text-3xl font-bold text-on-surface">
+            <div className="text-[clamp(1.75rem,1.9vw,2.25rem)] leading-none font-bold text-on-surface tabular-nums max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
               {churnRatio > 0 ? `${churnRatio.toFixed(1)}%` : "1.8%"}
             </div>
             <div className="text-xs text-secondary flex items-center gap-1 mt-2 font-medium">
