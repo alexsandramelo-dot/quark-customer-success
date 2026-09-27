@@ -1,8 +1,14 @@
-node_modules/
-build/
+.local-data/
 dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+/.env
+/.env.*
+!/.env.example
+
+node_modules/
+.pnpm-store/
 coverage/
-.DS_Store
-*.log
-.env*
-!.env.example
+/retorno/
+# Tracked functional rules workbook required by the consolidation pipeline.

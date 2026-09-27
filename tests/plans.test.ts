@@ -1,0 +1,25 @@
+import { strict as assert } from 'node:assert';
+import { fixedPlanNames, modulesForPlan, normalizePlanName } from '../src/domain/plans/planModules.ts';
+import { adoptionMatrix } from '../src/domain/adoption/matrix.ts';
+import { classifyIndicatorFiles } from '../src/domain/import/fileSelection.ts';
+
+assert.equal(normalizePlanName(' QuarkRH PREMIUM '), 'QuarkRH Premium');
+assert.equal(normalizePlanName('Administrativo (DP)'), 'Plano Administrativo');
+assert.equal(normalizePlanName('Frequência Essencial'), 'Frequência Básico');
+assert.equal(normalizePlanName('Plano Talento (RH)'), 'Plano Talento');
+assert.equal(normalizePlanName('plano inexistente'), null);
+assert.equal(modulesForPlan('Plano Administrativo').length, 9);
+assert.equal(modulesForPlan('Plano Organizacional').length, 14);
+assert.equal(modulesForPlan('Plano Operacional').length, 10);
+assert.equal(modulesForPlan('QuarkRH Premium').length, 18);
+const frequencyBasicModules = modulesForPlan('Frequência Básico');
+assert.deepEqual(modulesForPlan('Frequência Essencial'), frequencyBasicModules);
+const poTalentModules = ['Departamento Pessoal', 'Saúde Ocupacional', 'Avaliação de Desempenho', 'Comunicação', 'Pesquisa de Clima', 'Feedbacks', 'Administração', 'Recrutamento e Seleção', 'Portal do Colaborador', 'Portal do Gestor'];
+assert.deepEqual(modulesForPlan('Plano Talento'), poTalentModules);
+assert.deepEqual(modulesForPlan('Plano Talento (RH)'), poTalentModules);
+assert.equal(fixedPlanNames.length, 10);
+for (const matrix of adoptionMatrix) assert.equal(matrix.rules.reduce((sum, rule) => sum + rule.weight, 0), 100, matrix.name);
+const selection = classifyIndicatorFiles([{ name: 'DP.csv' }, { name: 'Frequência.xlsx' }, { name: 'Beneficios.xls' }, { name: '~$Frequência.xlsx' }, { name: 'notas.txt' }]);
+assert.deepEqual(selection.recognized.map((file) => file.name), ['DP.csv', 'Frequência.xlsx', 'Beneficios.xls']);
+assert.deepEqual(selection.ignored.map((file) => file.name), ['~$Frequência.xlsx', 'notas.txt']);
+console.log('Plan matrix and folder selection tests passed: 12 scenarios');
