@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "source": "matriz_consolidacao_modulos_quarkrh.xlsx",
+  "overrides": [
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_matriculas_ativas",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de matrículas ativas (0–11.495), não booleano. Somar registros por unidade; validar unicidade do registro de matrícula entre unidades antes de interpretar como alunos únicos."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_certificados_ativos",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de certificados ativos (0–54), não booleano. Somar certificados por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_cursos_ativos",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de cursos ativos (0–38), não booleano. Somar cursos por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_modulos_ativos",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de módulos ativos (0–206), não booleano. Somar módulos por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_aulas_ativas",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de aulas ativas (0–372), não booleano. Somar aulas por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_trilhas_ativas",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de trilhas ativas (0–13), não booleano. Somar trilhas por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_matriculas_ativas_90_dias",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de matrículas ativas no período (0–5.761), não booleano. Somar registros por unidade; o indicador não afirma contagem de pessoas únicas."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_matriculas_ativadas_90_dias",
+      "rule": "SOMAR",
+      "criterion": "Quantidade numérica de matrículas ativadas no período (0–402), não booleano. Somar eventos/registros por unidade."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_usuarios_ativos",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "A fonte contém contagens numéricas de usuários (0–769). Pessoas podem aparecer em mais de uma unidade; não há identificador individual para deduplicação."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "qtd_usuarios_ativos_habilitados",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Campo quantitativo de usuários (todos os 58 valores observados são zero). Não somar contagens de pessoas entre unidades sem identificadores individuais."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_pendentes_assinatura",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas pendentes (0–13.138); a mesma pessoa pode participar em várias unidades/documentos. A origem não inclui identificador individual nesta métrica."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_ativos",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas (1–4.766); pessoas podem repetir entre unidades e não há chave individual neste resumo."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_envio_email",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por canal; a mesma pessoa pode repetir entre unidades e canais. Não há identificador individual neste resumo."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_envio_whatsapp",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por canal; a mesma pessoa pode repetir entre unidades e canais. Não há identificador individual neste resumo."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_envio_sms",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por canal; a mesma pessoa pode repetir entre unidades e canais. Não há identificador individual neste resumo."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_autenticacao_token",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por método de autenticação; pessoas podem repetir entre unidades e métodos. Sem identificador individual."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_autenticacao_foto",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por método de autenticação; pessoas podem repetir entre unidades e métodos. Sem identificador individual."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_autenticacao_dados",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por método de autenticação; pessoas podem repetir entre unidades e métodos. Sem identificador individual."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "qtd_participantes_autenticacao_facial",
+      "rule": "NÃO SOMAR AUTOMATICAMENTE",
+      "criterion": "Contagem de participantes/pessoas por método de autenticação; pessoas podem repetir entre unidades e métodos. Sem identificador individual."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "data_documento_pendente_mais_antigo",
+      "rule": "MIN",
+      "criterion": "Campo de data/hora com menor data sendo o documento pendente mais antigo. Consolidar pelo mínimo cronológico."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "data_primeiro_documento",
+      "rule": "MIN",
+      "criterion": "Campo de data/hora do primeiro documento observado por unidade. Consolidar pelo mínimo cronológico."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "horas_mediana_ate_finalizacao",
+      "rule": "NÃO CONSOLIDAR",
+      "criterion": "Mediana de horas por unidade não pode ser reconstruída a partir de medianas resumidas. Dados individuais não estão na origem."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "horas_percentil_75_ate_finalizacao",
+      "rule": "NÃO CONSOLIDAR",
+      "criterion": "P75 por unidade não pode ser reconstruído a partir de percentis resumidos. Dados individuais não estão na origem."
+    },
+    {
+      "module": "Frequência",
+      "indicator": "qtd_colaboradores_registraram_ponto",
+      "rule": "RECALCULAR",
+      "criterion": "Recalcular a cobertura após a consolidação. Numerador = qtd_colaboradores_registraram_ponto. Denominador = colaboradores_ativos_importacao_true + colaboradores_ativos_importacao_false do módulo Departamento Pessoal. Pontuação máxima de 30 pontos. Não calcular média das coberturas das unidades."
+    }
+  ],
+  "derivedMetrics": [
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "media_aulas_por_curso",
+      "operation": "MÉDIA PONDERADA",
+      "numerator": "qtd_aulas_disponibilizadas",
+      "denominator": "qtd_cursos_ativos",
+      "criterion": "Média de aulas por curso = total de aulas disponibilizadas / total de cursos ativos. Soma os dois componentes por unidade e só calcula com denominador disponível e positivo."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "taxa_certificacao_sobre_matriculas_ativas_percentual",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_certificados_ativos",
+      "denominator": "qtd_matriculas_ativas",
+      "criterion": "Taxa de certificados ativos por matrícula ativa = certificados ativos / matrículas ativas. A definição do indicador explicita numerador e denominador; soma ambos entre unidades antes de dividir."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "taxa_ativacao_matriculas_percentual",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_matriculas_ativadas_90_dias",
+      "denominator": "qtd_matriculas_90_dias",
+      "criterion": "Taxa de ativação no período = matrículas ativadas em 90 dias / matrículas criadas em 90 dias. Componentes são somados entre unidades antes da divisão."
+    },
+    {
+      "module": "Treinamento e Desenvolvimento",
+      "indicator": "taxa_utilizacao_convites_percentual",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_convites_utilizados_90_dias",
+      "denominator": "qtd_convites_90_dias",
+      "criterion": "Utilização de convites = convites utilizados / convites enviados no mesmo período. Componentes são somados antes da divisão."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "taxa_abertura_percentual",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_notificacoes_abertas",
+      "denominator": "qtd_notificacoes_enviadas",
+      "criterion": "Taxa de abertura = notificações abertas / notificações enviadas. Numerador e denominador têm a mesma família de eventos; somar componentes antes da divisão."
+    },
+    {
+      "module": "Assinatura Eletrônica",
+      "indicator": "taxa_falha_percentual",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_notificacoes_nao_recebidas",
+      "denominator": "qtd_notificacoes_enviadas",
+      "criterion": "Taxa de falha = notificações não recebidas / notificações enviadas. Numerador e denominador têm a mesma família de eventos; somar componentes antes da divisão."
+    },
+    {
+      "module": "Frequência",
+      "indicator": "qtd_colaboradores_registraram_ponto",
+      "operation": "RECALCULAR",
+      "numerator": "qtd_colaboradores_registraram_ponto",
+      "denominator": "colaboradores_ativos_importacao_true + colaboradores_ativos_importacao_false",
+      "criterion": "Recalcular a cobertura após a consolidação. Numerador = qtd_colaboradores_registraram_ponto. Denominador = colaboradores_ativos_importacao_true + colaboradores_ativos_importacao_false do módulo Departamento Pessoal. Pontuação máxima de 30 pontos. Não calcular média das coberturas das unidades."
+    }
+  ]
+}

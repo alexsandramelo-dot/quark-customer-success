@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+.local-data/
+.pnpm-store/
+*.tsbuildinfo
+/vite.config.js
+/vite.config.d.ts

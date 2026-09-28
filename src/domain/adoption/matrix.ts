@@ -1,0 +1,38 @@
+import type { AdoptionModuleMatrix, AdoptionRule } from './types.ts';
+
+const b = (id: string, label: string, section: 'configuracao' | 'ativacao' | 'uso', weight: number): AdoptionRule => ({ id, label, section, kind: 'boolean', weight });
+const p = (id: string, label: string, section: 'configuracao' | 'ativacao' | 'uso', weight: number): AdoptionRule => ({ id, label, section, kind: 'positive', weight });
+const c = (id: string, label: string, section: 'configuracao' | 'ativacao' | 'uso', weight: number): AdoptionRule => ({ id, label, section, kind: 'count', weight });
+const sum = (id: string, label: string, section: 'configuracao' | 'ativacao' | 'uso', weight: number, componentIds: string[]): AdoptionRule => ({ id, label, section, kind: 'sum', weight, componentIds });
+const coverage = (id: string, label: string, section: 'uso', weight: number, numeratorId: string, denominatorId: string, overLimitReason?: string): AdoptionRule => ({ id, label, section, kind: 'coverage', weight, numeratorId, denominatorId, overLimitReason });
+
+export const adoptionMatrix: AdoptionModuleMatrix[] = [
+  { name: 'Departamento Pessoal', temporalType: 'CONTÍNUO', rules: [sum('employees-total', 'Colaboradores cadastrados', 'ativacao', 30, ['employees-imported', 'employees-direct']), b('company-configured', 'Dados da empresa preenchidos', 'configuracao', 15), c('sectors', 'Setores cadastrados', 'configuracao', 15), c('positions', 'Cargos cadastrados', 'configuracao', 15), c('document-model', 'Modelos de documentos cadastrados', 'configuracao', 15), b('experience-evaluation', 'Avaliação de experiência configurada', 'configuracao', 10)] },
+  { name: 'Benefícios', temporalType: 'CONTÍNUO', rules: [p('transport-voucher', 'Vale Transporte', 'configuracao', 25), p('meal-voucher', 'Vale Alimentação/Refeição', 'configuracao', 25), c('linked-employees', 'Colaboradores com benefício', 'ativacao', 50)] },
+  { name: 'Folha', temporalType: 'PERIÓDICO', rules: [b('payroll-configured', 'Integração contábil configurada', 'configuracao', 30), c('payroll-items', 'Rubricas cadastradas', 'ativacao', 30), c('payroll-created-history', 'Folhas existentes', 'uso', 40)] },
+  { name: 'Férias', temporalType: 'SAZONAL', rules: [b('vacation-configured', 'Configuração de Férias ativa', 'configuracao', 30), c('vacations-imported', 'Férias cadastradas', 'ativacao', 30), c('vacations-moved-period', 'Férias homologadas', 'uso', 40)] },
+  { name: 'Frequência', temporalType: 'CONTÍNUO', rules: [b('configuration-active', 'Configuração de Frequência ativa', 'configuracao', 10), c('schedules', 'Horários cadastrados', 'configuracao', 15), c('journeys', 'Jornadas cadastradas', 'configuracao', 15), coverage('point-registrants', 'Colaboradores registrando ponto', 'uso', 30, 'point-registrants', 'active-point-employees', 'Quantidade de colaboradores registrando ponto superior à quantidade de colaboradores ativos identificada no DP.'), c('frequency-requests', 'Solicitações de Frequência', 'uso', 20), c('point-treatment', 'Tratamentos de ponto registrados', 'uso', 10)] },
+  { name: 'Assinatura Eletrônica', temporalType: 'CONTÍNUO', rules: [b('first-document', 'Histórico: primeiro documento registrado', 'configuracao', 20), c('documents-total', 'Documentos registrados no histórico', 'ativacao', 20), c('documents-90-days', 'Documentos nos últimos 90 dias', 'uso', 25), c('documents-finalized-90-days', 'Documentos finalizados nos últimos 90 dias', 'uso', 25), b('active-unit-90-days', 'Unidade ativa nos últimos 90 dias', 'uso', 10)] },
+  { name: 'T&D', temporalType: 'CONTÍNUO / PERIÓDICO', rules: [c('active-course', 'Cursos ativos', 'configuracao', 20), c('active-modules', 'Módulos ativos', 'configuracao', 10), c('active-enrollments', 'Matrículas ativas', 'ativacao', 20), c('active-enrollments-90-days', 'Matrículas ativas nos últimos 90 dias', 'ativacao', 10), c('student-progress', 'Aulas assistidas', 'uso', 40)] },
+  { name: 'Saúde Ocupacional', temporalType: 'PERIÓDICO / SAZONAL', rules: [c('doctors', 'Médicos cadastrados', 'configuracao', 20), c('asos-configured', 'ASOs registrados', 'uso', 40), c('medical-certificates-period', 'Atestados registrados', 'uso', 40)] },
+  { name: 'Gestão de EPIs', temporalType: 'CONTÍNUO / PERIÓDICO', rules: [c('epi-stocks', 'Estoques', 'configuracao', 20), c('epi-items', 'Itens em estoque', 'ativacao', 30), c('epi-employees', 'Colaboradores com EPI', 'uso', 50)] },
+  { name: 'Avaliação de Desempenho', temporalType: 'PERIÓDICO', rules: [c('scales-configured', 'Escalas cadastradas', 'configuracao', 30), c('evaluation-process', 'Processos de avaliação', 'ativacao', 30), c('evaluations-answered', 'Resultados de avaliação registrados', 'uso', 40)] },
+  { name: 'Perfil Comportamental', temporalType: 'PERIÓDICO', rules: [b('disc-configured', 'Teste comportamental liberado', 'configuracao', 30), c('tests-answered', 'Respostas registradas', 'uso', 70)] },
+  { name: 'Comunicação', temporalType: 'CONTÍNUO', rules: [c('communications-or-surveys', 'Questionários cadastrados', 'configuracao', 30), c('published-content', 'Comunicados registrados', 'ativacao', 30), c('surveys-answered-period', 'Respostas a questionários registradas', 'uso', 40)] },
+  { name: 'Pesquisa de Clima', temporalType: 'PERIÓDICO', rules: [c('climate-survey-created', 'Questionários de clima cadastrados', 'configuracao', 20), c('responses', 'Respostas registradas', 'uso', 80)] },
+  { name: 'Feedbacks', temporalType: 'CONTÍNUO', rules: [b('feedback-configured', 'Feedbacks ativados', 'configuracao', 10), c('praise-types', 'Tipos de elogio cadastrados', 'configuracao', 10), c('praises-history', 'Elogios registrados', 'uso', 30), c('feedbacks-history', 'Feedbacks registrados', 'uso', 50)] },
+  { name: 'Administração', temporalType: 'CONTÍNUO', rules: [c('administrators', 'Administradores cadastrados', 'configuracao', 30), c('active-users', 'Usuários ativos', 'ativacao', 30), coverage('admin-coverage', 'Cobertura de usuários ativos', 'uso', 40, 'active-users', 'expected-users')] },
+  { name: 'Recrutamento e Seleção', temporalType: 'SAZONAL', rules: [b('jobs-portal', 'Portal público configurado', 'configuracao', 15), c('selection-stages', 'Etapas do processo cadastradas', 'configuracao', 25), c('candidates', 'Inscritos nos processos', 'uso', 60)] },
+  { name: 'Portal do Colaborador', temporalType: 'CONTÍNUO', rules: [b('portal-configured', 'Configuração/ativação mensurável', 'configuracao', 30), c('portal-frequency-requests', 'Solicitações de Frequência do colaborador', 'uso', 20), c('portal-general-requests', 'Solicitações gerais do colaborador', 'uso', 10), c('portal-documents', 'Documentos/checklist admissional', 'uso', 10), coverage('portal-employee-coverage', 'Cobertura de uso do portal', 'uso', 30, 'active-portal-users', 'eligible-portal-employees')] },
+  { name: 'Portal do Gestor', temporalType: 'CONTÍNUO', rules: [b('manager-configured', 'Configuração/ativação mensurável', 'configuracao', 30), c('manager-frequency-approvals', 'Solicitações de Frequência aprovadas', 'uso', 15), c('manager-general-approvals', 'Solicitações gerais aprovadas', 'uso', 15), c('manager-evaluations-feedbacks', 'Avaliações/feedbacks de gestores', 'uso', 20), coverage('manager-coverage', 'Cobertura de uso do portal', 'uso', 20, 'active-portal-managers', 'eligible-portal-managers')] },
+];
+
+const moduleAliases: Record<string, string> = {
+  'folha de pagamento': 'folha',
+  'treinamento e desenvolvimento': 't&d',
+};
+export const getAdoptionModule = (name: string) => {
+  const key = name.toLocaleLowerCase('pt-BR');
+  const canonical = moduleAliases[key] ?? key;
+  return adoptionMatrix.find((module) => module.name.toLocaleLowerCase('pt-BR') === canonical);
+};
