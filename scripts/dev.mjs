@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
-import { handleIngestionRequest } from './ingestion/server.mjs';
+import { handleIngestionRequest, startDailyClickUpSync } from './ingestion/server.mjs';
 
 await build({
   root: process.cwd(),
@@ -35,4 +35,5 @@ const shutdown = () => server.close(() => process.exit(0));
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 const port = Number(process.env.PORT ?? 5173);
+startDailyClickUpSync();
 server.listen(port, '127.0.0.1', () => console.log(`Local: http://localhost:${port}/`));

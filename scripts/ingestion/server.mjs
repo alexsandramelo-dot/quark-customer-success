@@ -1,6 +1,6 @@
 import { mkdir, open as openFile, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { once } from 'node:events';
 import { FILE_TYPES, inspectFiles, parseWorkbook, processFiles } from './core.mjs';
@@ -8,6 +8,7 @@ import { adoptionMatrix } from '../../src/domain/adoption/matrix.ts';
 import { classifyAdoption } from '../../src/domain/adoption/classification.ts';
 import { moduleAvailabilityReason } from '../../src/domain/dashboard/moduleAvailability.ts';
 import { clickUpRosterCsv, fetchClickUpRoster } from './clickup.mjs';
+import { createDailyClickUpScheduler, hasSuccessfulSyncToday } from './clickup-scheduler.mjs';
 
 const MAX_BODY = 20 * 1024 * 1024;
 const MAX_FILE = 10 * 1024 * 1024;
@@ -16,6 +17,27 @@ const rawFilesPath = join(process.cwd(), '.local-data', 'raw-files.json.gz');
 let cachedState = null;
 let cachedStateMtime = -1;
 let processingProgress = { status: 'idle', stage: 'idle', completed: 0, total: 0, updatedAt: null };
+const importSessions = new Map();
+let clickupSyncPromise = null;
+let dailySyncScheduler = null;
+
+function hasImportSession(request) {
+  const token = request.headers['x-import-session'];
+  return typeof token === 'string' && importSessions.has(token);
+}
+function passwordMatches(candidate) {
+  const configured = process.env.IMPORT_PASSWORD;
+  if (!configured || typeof candidate !== 'string') return false;
+  const supplied = Buffer.from(candidate);
+  const expected = Buffer.from(configured);
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+function clickUpSyncError(message, statusCode = 502, details = {}) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  Object.assign(error, details);
+  return error;
+}
 
 const progressStage = (stage, completed = 0, total = 0) => {
   processingProgress = { status: 'processando', stage, completed, total, updatedAt: new Date().toISOString() };
@@ -198,9 +220,77 @@ async function mergeWithPersistedFiles(incoming) {
   return [...new Map(merged.map((file) => [file.filename, file])).values()];
 }
 
+export async function synchronizeClickUp() {
+  if (clickupSyncPromise) return clickupSyncPromise;
+  clickupSyncPromise = (async () => {
+    let attemptedAt = new Date().toISOString();
+    try {
+      const metadataState = await loadState();
+      if (hasSuccessfulSyncToday(metadataState, new Date(attemptedAt))) return { status: 'ja_sincronizado_hoje', processedAt: metadataState.processedAt ?? null, summary: metadataState.clickupSync ?? null };
+      const startedSync = { ...(metadataState.clickupSync ?? {}), status: 'sincronizando', lastAttemptAt: attemptedAt, lastAttemptResult: 'em_andamento', lastError: null };
+      await persistState({ ...metadataState, diagnostics: { ...(metadataState.diagnostics ?? {}), clickupSync: startedSync }, clickupSync: startedSync });
+      progressStage('sincronizando_clickup', 0, 2);
+      const current = await loadState({ withRawFiles: true });
+      const currentRawFiles = current.rawFiles ?? [];
+      const preservedFiles = currentRawFiles.map((file) => ({ filename: file.filename, content: Buffer.from(file.content, 'base64') })).filter((file) => classifyRawFile(file) !== FILE_TYPES.CLIENTS);
+      const preservedTypes = preservedFiles.map((file) => classifyRawFile(file));
+      if (!preservedTypes.some((type) => type !== FILE_TYPES.UNKNOWN && type !== FILE_TYPES.MATRIX)) throw clickUpSyncError('Sincronização cadastral interrompida: não há indicadores de uso persistidos para recalcular a carteira.', 422, { resultStatus: 'sem_indicadores_persistidos' });
+      const roster = await fetchClickUpRoster();
+      progressStage('processando_carteira', 1, 2);
+      const baseFile = { filename: `clickup-clientes-${new Date().toISOString().slice(0, 10)}.csv`, content: clickUpRosterCsv(roster.clients) };
+      const files = [baseFile, ...preservedFiles];
+      const inspected = await inspectFiles(files);
+      if (!inspected.canProcess) throw clickUpSyncError(inspected.errors?.[0] ?? 'A lista do ClickUp não passou pela validação.', 422, { resultStatus: 'nao_processado', errors: inspected.errors, warnings: inspected.warnings });
+      const result = await processFiles(files, { onProgress: progressStage });
+      if (!result.canProcess) throw clickUpSyncError(result.errors?.[0] ?? 'Não foi possível recalcular a carteira com os dados do ClickUp.', 422, { resultStatus: 'nao_processado', errors: result.errors, warnings: result.warnings });
+      const syncedAt = new Date().toISOString();
+      const clickupSync = { status: 'sincronizado', syncedAt, lastAttemptAt: attemptedAt, lastAttemptResult: 'sucesso',
+        lists: roster.lists.map((list) => ({ id: list.id, name: list.name, taskCount: list.tasks.length, pages: list.pages.length, pageRequests: list.pageRequests })),
+        baseCustomerCount: roster.sourceCounts.base, churnCustomerCount: roster.sourceCounts.churn, consolidatedCustomerCount: roster.clients.length,
+        activeCustomerCount: roster.clients.filter((client) => client.active).length, churnOnlyCustomerCount: roster.clients.filter((client) => !client.active).length,
+        duplicateCount: roster.duplicateDiagnostics.length, crossListDuplicateCount: roster.duplicateDiagnostics.filter((item) => item.sources.includes('BASE_CLIENTES_RH') && item.sources.includes('CHURN')).length,
+        duplicateDiagnostics: roster.duplicateDiagnostics, sourceConflictCount: roster.duplicateDiagnostics.filter((item) => item.sourceConflicts.length).length, lastError: null };
+      const nextState = { status: 'processado', processedAt: syncedAt, files: result.files, summary: result.summary, diagnostics: { ...result.diagnostics, clickupSync }, relationRecords: result.relationRecords, customers: result.customers, plans: result.plans, warnings: result.warnings, errors: result.errors, clickupSync };
+      const rawFiles = files.map((file) => ({ filename: file.filename, content: file.content.toString('base64') }));
+      const saved = await persistState(nextState, rawFiles);
+      processingProgress = { status: 'concluido', stage: 'concluido', completed: 2, total: 2, updatedAt: syncedAt };
+      return { status: 'sincronizado', processedAt: saved.processedAt, summary: saved.clickupSync, indicatorsPreserved: preservedTypes.filter((type) => type !== FILE_TYPES.MATRIX).length };
+    } catch (error) {
+      const failedAt = new Date().toISOString();
+      processingProgress = { status: 'erro', stage: 'erro', completed: 0, total: 0, updatedAt: failedAt };
+      const current = await loadState().catch(() => null);
+      const clickupSync = { ...(current?.clickupSync ?? {}), status: 'erro', lastAttemptAt: attemptedAt, lastAttemptResult: 'erro', lastError: error instanceof Error ? error.message : 'Não foi possível sincronizar com ClickUp.' };
+      await persistState({ ...(current ?? { status: 'nenhum_lote_processado', files: [], summary: null }), clickupSync, diagnostics: { ...(current?.diagnostics ?? {}), clickupSync } }).catch((persistError) => console.error('Não foi possível registrar o erro de sincronização ClickUp:', persistError));
+      throw error;
+    }
+  })().finally(() => { clickupSyncPromise = null; });
+  return clickupSyncPromise;
+}
+
+export function startDailyClickUpSync() {
+  if (dailySyncScheduler) return;
+  dailySyncScheduler = createDailyClickUpScheduler({ getState: loadState, synchronize: synchronizeClickUp, onError: (error) => console.error('Falha na sincronização diária do ClickUp:', error) });
+  dailySyncScheduler.start();
+}
+
 export async function handleIngestionRequest(request, response) {
   const path = new URL(request.url, 'http://localhost').pathname;
   if (request.method === 'GET' && path === '/api/health') return json(response, 200, { ok: true, service: 'quarkrh-local-ingestion' });
+  if (path === '/api/import/auth' && request.method === 'GET') return json(response, 200, { authenticated: false });
+  if (path === '/api/import/auth' && request.method === 'POST') {
+    let payload;
+    try { payload = JSON.parse((await bodyBuffer(request)).toString('utf8')); } catch { return json(response, 400, { error: 'Requisição inválida.' }); }
+    if (!passwordMatches(payload.password)) return json(response, 401, { error: 'Senha inválida ou não configurada no servidor.' });
+    const token = randomUUID();
+    importSessions.set(token, true);
+    return json(response, 200, { authenticated: true, sessionToken: token });
+  }
+  if (path === '/api/import/auth' && request.method === 'DELETE') {
+    const token = request.headers['x-import-session'];
+    if (token) importSessions.delete(token);
+    return json(response, 200, { authenticated: false });
+  }
+  if ((path.startsWith('/api/import/') || path === '/api/clickup/sync') && !hasImportSession(request)) return json(response, 401, { error: 'Autenticação necessária para acessar a importação.' });
   if (request.method === 'GET' && path === '/api/import/progress') return json(response, 200, processingProgress);
   if (request.method === 'GET' && path === '/api/data/status') return json(response, 200, statusView(await loadState()));
   if (request.method === 'GET' && path === '/api/data/dashboard') {
@@ -209,46 +299,10 @@ export async function handleIngestionRequest(request, response) {
   }
   if (request.method === 'POST' && path === '/api/clickup/sync') {
     try {
-      progressStage('sincronizando_clickup', 0, 2);
-      const current = await loadState({ withRawFiles: true });
-      const currentRawFiles = current.rawFiles ?? [];
-      const preservedFiles = currentRawFiles
-        .map((file) => ({ filename: file.filename, content: Buffer.from(file.content, 'base64') }))
-        .filter((file) => classifyRawFile(file) !== FILE_TYPES.CLIENTS);
-      const preservedTypes = preservedFiles.map((file) => classifyRawFile(file));
-      if (!preservedTypes.some((type) => type !== FILE_TYPES.UNKNOWN && type !== FILE_TYPES.MATRIX)) {
-        return json(response, 422, { status: 'sem_indicadores_persistidos', errors: ['Sincronização cadastral interrompida: não há indicadores de uso persistidos para recalcular a carteira.'] });
-      }
-      const roster = await fetchClickUpRoster();
-      progressStage('processando_carteira', 1, 2);
-      const baseFile = { filename: `clickup-clientes-${new Date().toISOString().slice(0, 10)}.csv`, content: clickUpRosterCsv(roster.clients) };
-      const files = [baseFile, ...preservedFiles];
-      const inspected = await inspectFiles(files);
-      if (!inspected.canProcess) return json(response, 422, { status: 'nao_processado', errors: inspected.errors, warnings: inspected.warnings });
-      cachedState = null; cachedStateMtime = -1;
-      const result = await processFiles(files, { onProgress: progressStage });
-      if (!result.canProcess) return json(response, 422, { status: 'nao_processado', errors: result.errors, warnings: result.warnings });
-      const syncedAt = new Date().toISOString();
-      const clickupSync = {
-        status: 'sincronizado', syncedAt,
-        lists: roster.lists.map((list) => ({ id: list.id, name: list.name, taskCount: list.tasks.length, pages: list.pages.length, pageRequests: list.pageRequests })),
-        baseCustomerCount: roster.sourceCounts.base, churnCustomerCount: roster.sourceCounts.churn,
-        consolidatedCustomerCount: roster.clients.length,
-        activeCustomerCount: roster.clients.filter((client) => client.active).length,
-        churnOnlyCustomerCount: roster.clients.filter((client) => !client.active).length,
-        duplicateCount: roster.duplicateDiagnostics.length,
-        crossListDuplicateCount: roster.duplicateDiagnostics.filter((item) => item.sources.includes('BASE_CLIENTES_RH') && item.sources.includes('CHURN')).length,
-        duplicateDiagnostics: roster.duplicateDiagnostics,
-        sourceConflictCount: roster.duplicateDiagnostics.filter((item) => item.sourceConflicts.length).length,
-      };
-      const nextState = { status: 'processado', processedAt: syncedAt, files: result.files, summary: result.summary, diagnostics: { ...result.diagnostics, clickupSync }, relationRecords: result.relationRecords, customers: result.customers, plans: result.plans, warnings: result.warnings, errors: result.errors, clickupSync };
-      const rawFiles = files.map((file) => ({ filename: file.filename, content: file.content.toString('base64') }));
-      const saved = await persistState(nextState, rawFiles);
-      processingProgress = { status: 'concluido', stage: 'concluido', completed: 2, total: 2, updatedAt: syncedAt };
-      return json(response, 200, { status: 'sincronizado', processedAt: saved.processedAt, summary: saved.clickupSync, indicatorsPreserved: preservedTypes.filter((type) => type !== FILE_TYPES.MATRIX).length });
+      return json(response, 200, await synchronizeClickUp());
     } catch (error) {
       processingProgress = { status: 'erro', stage: 'erro', completed: 0, total: 0, updatedAt: new Date().toISOString() };
-      return json(response, 502, { status: 'erro', errors: [error instanceof Error ? error.message : 'Não foi possível sincronizar com ClickUp.'] });
+      return json(response, error.statusCode ?? 502, { status: error.resultStatus ?? 'erro', errors: error.errors ?? [error instanceof Error ? error.message : 'Não foi possível sincronizar com ClickUp.'], ...(error.warnings ? { warnings: error.warnings } : {}) });
     }
   }
   if (request.method === 'GET' && path === '/api/data/customer') {

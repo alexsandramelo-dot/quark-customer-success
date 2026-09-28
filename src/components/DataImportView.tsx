@@ -5,13 +5,37 @@ import { classifyIndicatorFiles } from '../domain/import/fileSelection';
 import { formatProcessedDate } from '../domain/customer/format';
 import { AppSidebar } from './AppSidebar';
 
-type Props = { back: () => void; hasCurrentData?: boolean; sidebarCollapsed: boolean; onToggleSidebar: () => void };
+type Props = { back: () => void; onDashboard: () => void; hasCurrentData?: boolean; sidebarCollapsed: boolean; onToggleSidebar: () => void };
 type DirectoryInput = HTMLInputElement & { webkitdirectory?: boolean; directory?: boolean };
 const supported = /\.(csv|xlsx|xls)$/i;
 const stages = ['Enviando arquivos', 'Lendo planilhas', 'Validando dados', 'Relacionando clientes', 'Identificando unidades', 'Consolidando indicadores', 'Calculando adoção', 'Salvando dados', 'Atualizando carteira'];
 const stageIndex: Record<string, number> = { enviando_arquivos: 0, lendo_arquivos: 1, validando_estrutura: 2, validando_dados: 2, relacionando_clientes: 3, identificando_unidades: 4, consolidando_indicadores: 5, calculando_adocao: 6, salvando_dados: 7, finalizando: 7, atualizando_carteira: 8, concluido: 8, erro: 0 };
 
-export function DataImportView({ back, hasCurrentData = false, sidebarCollapsed, onToggleSidebar }: Props) {
+export function DataImportView(props: Props) {
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  if (!sessionToken) return <ImportPasswordGate onAuthenticated={setSessionToken} />;
+  return <AuthenticatedDataImportView {...props} sessionToken={sessionToken} onSessionEnd={() => setSessionToken(null)} />;
+}
+
+function ImportPasswordGate({ onAuthenticated }: { onAuthenticated: (token: string) => void }) {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const response = await fetch(apiUrl('/api/import/auth'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+      if (!response.ok) throw new Error((await response.json()).error ?? 'Não foi possível autenticar.');
+      const payload = await response.json();
+      if (typeof payload.sessionToken !== 'string' || !payload.sessionToken) throw new Error('Resposta inválida do serviço de autenticação.');
+      onAuthenticated(payload.sessionToken);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Não foi possível autenticar.'); }
+    finally { setBusy(false); }
+  };
+  return <main className="content detail-content"><section className="import-panel import-auth-panel"><p className="eyebrow">ÁREA RESTRITA</p><h1>Importação de dados</h1><form onSubmit={(event) => void submit(event)}><label>Senha de acesso<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required autoFocus /></label><button className="primary-button" type="submit" disabled={busy}>{busy ? 'Validando…' : 'Acessar importação'}</button>{error && <div className="import-message error" role="alert">{error}</div>}</form></section></main>;
+}
+
+function AuthenticatedDataImportView({ back, onDashboard, hasCurrentData = false, sidebarCollapsed, onToggleSidebar, sessionToken, onSessionEnd }: Props & { sessionToken: string; onSessionEnd: () => void }) {
   const [clientFile, setClientFile] = useState<File | null>(null);
   const [indicatorFiles, setIndicatorFiles] = useState<File[]>([]);
   const [ignored, setIgnored] = useState<string[]>([]);
@@ -21,16 +45,28 @@ export function DataImportView({ back, hasCurrentData = false, sidebarCollapsed,
   const [syncError, setSyncError] = useState('');
   const [progress, setProgress] = useState<any>(null);
   const [currentStatus, setCurrentStatus] = useState<any>(null);
+  const authorizedFetch = (input: RequestInfo | URL, init: RequestInit = {}) => fetch(input, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers).entries()), 'X-Import-Session': sessionToken } });
+  const leaveImport = (destination: 'home' | 'dashboard') => {
+    void fetch(apiUrl('/api/import/auth'), { method: 'DELETE', headers: { 'X-Import-Session': sessionToken }, keepalive: true }).catch(() => {});
+    onSessionEnd();
+    (destination === 'dashboard' ? onDashboard : back)();
+  };
+  useEffect(() => {
+    const revokeOnExit = () => { void fetch(apiUrl('/api/import/auth'), { method: 'DELETE', headers: { 'X-Import-Session': sessionToken }, keepalive: true }); onSessionEnd(); };
+    window.addEventListener('pagehide', revokeOnExit);
+    window.addEventListener('popstate', revokeOnExit);
+    return () => { window.removeEventListener('pagehide', revokeOnExit); window.removeEventListener('popstate', revokeOnExit); };
+  }, [sessionToken, onSessionEnd]);
   useEffect(() => { const refresh = () => fetch(apiUrl('/api/data/status')).then((response) => response.json()).then(setCurrentStatus).catch(() => setCurrentStatus(null)); void refresh(); window.addEventListener('quarkrh:data-updated', refresh); return () => window.removeEventListener('quarkrh:data-updated', refresh); }, []);
   const files = useMemo(() => clientFile ? [clientFile, ...indicatorFiles] : indicatorFiles, [clientFile, indicatorFiles]);
 
   useEffect(() => {
     if (!busy) return;
     let active = true;
-    const poll = async () => { try { const response = await fetch(apiUrl('/api/import/progress')); const value = await response.json(); if (active) setProgress(value); } catch { /* progresso local pode ainda estar iniciando */ } };
+    const poll = async () => { try { const response = await authorizedFetch(apiUrl('/api/import/progress')); const value = await response.json(); if (active) setProgress(value); } catch { /* progresso local pode ainda estar iniciando */ } };
     void poll(); const timer = window.setInterval(poll, 700);
     return () => { active = false; window.clearInterval(timer); };
-  }, [busy]);
+  }, [busy, sessionToken]);
 
   const chooseClients = (list: FileList | null) => { const file = list?.[0] ?? null; setClientFile(file && supported.test(file.name) ? file : null); setResult(null); };
   const chooseIndicators = (list: FileList | File[]) => {
@@ -45,7 +81,7 @@ export function DataImportView({ back, hasCurrentData = false, sidebarCollapsed,
     if (syncBusy || busy) return;
     setSyncBusy(true); setSyncError('');
     try {
-      const response = await fetch(apiUrl('/api/clickup/sync'), { method: 'POST' });
+      const response = await authorizedFetch(apiUrl('/api/clickup/sync'), { method: 'POST' });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.errors?.[0] ?? 'Não foi possível sincronizar com ClickUp.');
       const status = await fetch(apiUrl('/api/data/status')).then((value) => value.json());
@@ -60,7 +96,7 @@ export function DataImportView({ back, hasCurrentData = false, sidebarCollapsed,
     const form = new FormData(); files.forEach((file) => form.append('files', file, file.name));
     const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 15 * 60 * 1000);
     try {
-      const response = await fetch(apiUrl(path), { method: 'POST', body: form, signal: controller.signal });
+      const response = await authorizedFetch(apiUrl(path), { method: 'POST', body: form, signal: controller.signal });
       const payload = await response.json().catch(() => ({ status: 'erro', errors: [`Resposta inválida do serviço local (HTTP ${response.status}).`] }));
       if (!response.ok || payload.status === 'erro') { setResult({ ...payload, failedStage: stage }); setProgress((previous: any) => ({ ...previous, stage: 'erro' })); }
       else setResult(payload);
@@ -81,9 +117,9 @@ export function DataImportView({ back, hasCurrentData = false, sidebarCollapsed,
   const baseFile = currentStatus?.files?.find((file: any) => file.type === 'BASE_CLIENTES');
   const importedAt = formatProcessedDate(currentStatus?.processedAt, true) ?? '—';
 
-  return <><AppSidebar onHome={() => { if (!busy) back(); }} onImport={() => {}} active="settings" collapsed={sidebarCollapsed} onToggle={onToggleSidebar}/><main><header className="topbar"><div className="brand"><div className="brand-mark">Q</div><div><strong>QuarkRH</strong><span>Monitoramento de Uso</span></div></div><div className="top-title"><strong>Importação de dados</strong><span>Base de clientes e indicadores</span></div></header><div className="content detail-content">
+  return <><AppSidebar onHome={() => { if (!busy) leaveImport('home'); }} onDashboard={() => { if (!busy) leaveImport('dashboard'); }} onImport={() => {}} active="settings" collapsed={sidebarCollapsed} onToggle={onToggleSidebar}/><main><header className="topbar"><div className="brand"><div className="brand-mark">Q</div><div><strong>QuarkRH</strong><span>Monitoramento de Uso</span></div></div><div className="top-title"><strong>Importação de dados</strong><span>Base de clientes e indicadores</span></div></header><div className="content detail-content">
     <div className="page-heading"><div><p className="eyebrow">DADOS · PROCESSAMENTO LOCAL</p><h1>Importação de dados</h1><p>Sincronize a base de clientes pelo ClickUp e importe os arquivos de indicadores de uso.</p></div></div>{currentStatus?.status === 'processado' ? <section className="import-panel current-import"><strong>Base atualmente importada</strong><span>Arquivo: {baseFile?.filename ?? 'Não identificado'}</span><span>Última importação: {importedAt}</span><span>Clientes: {currentStatus.diagnostics?.clientCount ?? currentStatus.customers?.length ?? '—'}</span><span>Arquivos de indicadores: {currentStatus.diagnostics?.indicatorFilesProcessed ?? '—'}</span><span>Módulos identificados: {currentStatus.diagnostics?.modulesFound ?? '—'}</span></section> : <section className="import-panel">Nenhuma base importada.</section>}
-    <div className="import-columns"><section className="import-panel clickup-panel"><div className="breakdown-head"><div><strong>BASE DE CLIENTES — CLICKUP</strong><span>Carteira sincronizada das listas Base de Clientes RH e CHURN</span></div><FileSpreadsheet size={19}/></div><div className="clickup-sync-summary"><span>Status da integração: <strong>{currentStatus?.clickupSync?.status ?? 'Não sincronizada'}</strong></span><span>Última sincronização: <strong>{formatProcessedDate(currentStatus?.clickupSync?.syncedAt, true) ?? '—'}</strong></span><span>Tasks Base de Clientes RH: <strong>{currentStatus?.clickupSync?.baseCustomerCount ?? '—'}</strong></span><span>Tasks CHURN: <strong>{currentStatus?.clickupSync?.churnCustomerCount ?? '—'}</strong></span><span>Clientes únicos: <strong>{currentStatus?.clickupSync?.consolidatedCustomerCount ?? '—'}</strong></span><span>Ativos: <strong>{currentStatus?.clickupSync?.activeCustomerCount ?? '—'}</strong></span><span>Somente CHURN: <strong>{currentStatus?.clickupSync?.churnOnlyCustomerCount ?? '—'}</strong></span><span>Nomes duplicados: <strong>{currentStatus?.clickupSync?.duplicateCount ?? '—'}</strong></span><span>Repetidos entre listas: <strong>{currentStatus?.clickupSync?.crossListDuplicateCount ?? 0}</strong></span></div><button className="primary-button" disabled={syncBusy || busy} onClick={() => void syncClickUp()}>{syncBusy ? <><LoaderCircle size={16} className="spin"/> Sincronizando clientes…</> : 'Sincronizar clientes'}</button>{syncError && <div className="import-message error" role="alert">{syncError}</div>}{currentStatus?.clickupSync?.sourceConflictCount > 0 && <div className="import-message warning">{currentStatus.clickupSync.sourceConflictCount} cliente(s) têm divergência cadastral entre listas; a Base de Clientes RH prevalece e o diagnóstico foi preservado.</div>}</section><section className="import-panel"><div className="breakdown-head"><div><strong>INDICADORES DE USO</strong><span>Múltiplos arquivos ou uma pasta completa</span></div><FolderOpen size={19}/></div><div className="import-actions"><label className="primary-button upload-button"><Upload size={16}/> Selecionar arquivos<input type="file" accept=".csv,.xlsx,.xls" multiple disabled={busy} onChange={(event) => chooseIndicators(Array.from(event.target.files ?? []))}/></label><label className="secondary-button upload-button"><FolderOpen size={16}/> Selecionar pasta<input type="file" accept=".csv,.xlsx,.xls" {...directoryProps} disabled={busy} onChange={(event) => chooseIndicators(Array.from(event.target.files ?? []))}/></label></div>{indicatorFiles.length > 0 && <div className="import-summary">{indicatorFiles.length} arquivo(s) de indicadores selecionado(s)</div>}{ignored.length > 0 && <div className="import-message warning">{ignored.length} arquivo(s) ignorado(s): {ignored.slice(0, 5).join(', ')}{ignored.length > 5 ? '…' : ''}</div>}</section></div>
+    <div className="import-columns"><section className="import-panel clickup-panel"><div className="breakdown-head"><div><strong>BASE DE CLIENTES — CLICKUP</strong><span>Carteira sincronizada das listas Base de Clientes RH e CHURN</span></div><FileSpreadsheet size={19}/></div><div className="clickup-sync-summary"><span>Sincronização automática: Diariamente às 06:00 (America/Sao_Paulo)</span><span>Status da integração: <strong>{currentStatus?.clickupSync?.status ?? 'Não sincronizada'}</strong></span><span>Última sincronização: <strong>{formatProcessedDate(currentStatus?.clickupSync?.syncedAt, true) ?? '—'}</strong></span><span>Tasks Base de Clientes RH: <strong>{currentStatus?.clickupSync?.baseCustomerCount ?? '—'}</strong></span><span>Tasks CHURN: <strong>{currentStatus?.clickupSync?.churnCustomerCount ?? '—'}</strong></span><span>Clientes únicos: <strong>{currentStatus?.clickupSync?.consolidatedCustomerCount ?? '—'}</strong></span><span>Ativos: <strong>{currentStatus?.clickupSync?.activeCustomerCount ?? '—'}</strong></span><span>Somente CHURN: <strong>{currentStatus?.clickupSync?.churnOnlyCustomerCount ?? '—'}</strong></span><span>Nomes duplicados: <strong>{currentStatus?.clickupSync?.duplicateCount ?? '—'}</strong></span><span>Repetidos entre listas: <strong>{currentStatus?.clickupSync?.crossListDuplicateCount ?? 0}</strong></span></div><button className="primary-button" disabled={syncBusy || busy} onClick={() => void syncClickUp()}>{syncBusy ? <><LoaderCircle size={16} className="spin"/> Sincronizando clientes…</> : 'Sincronizar clientes'}</button>{syncError && <div className="import-message error" role="alert">{syncError}</div>}{currentStatus?.clickupSync?.sourceConflictCount > 0 && <div className="import-message warning">{currentStatus.clickupSync.sourceConflictCount} cliente(s) têm divergência cadastral entre listas; a Base de Clientes RH prevalece e o diagnóstico foi preservado.</div>}</section><section className="import-panel"><div className="breakdown-head"><div><strong>INDICADORES DE USO</strong><span>Múltiplos arquivos ou uma pasta completa</span></div><FolderOpen size={19}/></div><div className="import-actions"><label className="primary-button upload-button"><Upload size={16}/> Selecionar arquivos<input type="file" accept=".csv,.xlsx,.xls" multiple disabled={busy} onChange={(event) => chooseIndicators(Array.from(event.target.files ?? []))}/></label><label className="secondary-button upload-button"><FolderOpen size={16}/> Selecionar pasta<input type="file" accept=".csv,.xlsx,.xls" {...directoryProps} disabled={busy} onChange={(event) => chooseIndicators(Array.from(event.target.files ?? []))}/></label></div>{indicatorFiles.length > 0 && <div className="import-summary">{indicatorFiles.length} arquivo(s) de indicadores selecionado(s)</div>}{ignored.length > 0 && <div className="import-message warning">{ignored.length} arquivo(s) ignorado(s): {ignored.slice(0, 5).join(', ')}{ignored.length > 5 ? '…' : ''}</div>}</section></div>
     {files.length > 0 && <div className="import-panel"><div className="breakdown-head"><div><strong>Arquivos selecionados</strong><span>{files.length} arquivo(s) · prévia antes do processamento</span></div></div><div className="file-list">{files.map((file) => <div className="file-row" key={`${file.name}-${file.size}`}><span>{file.webkitRelativePath || file.name}</span><small>{Math.ceil(file.size / 1024)} KB</small></div>)}</div><div className="import-actions"><button className="secondary-button" disabled={busy || !indicatorFiles.length} onClick={() => send('/api/import/inspect')}>Validar lote</button><button className="primary-button" disabled={busy || indicatorFiles.length === 0} onClick={() => send('/api/import/process')}>{busy ? <><LoaderCircle size={16} className="spin"/> Processando dados…</> : 'Processar dados'}</button></div>{(busy || completed) && <div className="import-progress" role="status" aria-live="polite"><div className="import-progress-heading"><strong>{completed ? 'Importação concluída com sucesso.' : 'Processando dados'}</strong><span>{progressPercent}%</span></div><div className="import-progress-track" role="progressbar" aria-label="Progresso das etapas de importação" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }}/></div><div className="import-progress-step"><strong>{stage}</strong><span>Etapa {progressStep} de {stages.length} · progresso das etapas, não percentual de linhas</span></div></div>}</div>}
     {result && <div className="import-panel"><div className="breakdown-head"><div><strong>{result.status === 'processado' ? 'Importação concluída com sucesso.' : 'Resultado da validação'}</strong><span>{result.status}</span></div><span className="badge">{result.status === 'processado' ? 'SUCESSO' : result.errors?.length ? 'ERRO' : result.warnings?.length ? 'ALERTA' : 'PRONTO'}</span></div>{result.files?.map((file: any) => <div className="import-result" key={file.filename}><strong>{file.filename}</strong><span>{file.type} · {file.rowCount} linha(s) úteis · {file.confidence}</span><small>{file.reason}</small>{file.preview?.length > 0 && <small>Prévia: {JSON.stringify(file.preview[0])}</small>}</div>)}{result.summary && <div className="import-summary">Arquivos: {result.summary.totalFiles} · reconhecidos: {result.summary.recognizedFiles} · linhas: {result.summary.totalRows} · módulos: {result.diagnostics?.modulesFound ?? '—'}/18 · clientes: {result.diagnostics?.clientCount ?? result.diagnostics?.clientsInBase ?? '—'} · unidades: {result.diagnostics?.identifiedUnits ?? '—'} · com score: {result.diagnostics?.customersWithOverallScore ?? '—'} · indicadores sem regra: {result.diagnostics?.consolidation?.indicatorsWithoutRule ?? '—'} · indicadores não mapeados: {result.diagnostics?.indicatorsNotRecognized ?? '—'}</div>}{result.errors?.map((error: any, index: number) => <div className="import-message error" key={index}>{typeof error === 'string' ? error : `${error.filename ?? error.file ?? 'Arquivo'}: ${error.message ?? error.issue ?? 'Erro de processamento'}`}</div>)}{result.warnings?.map((warning: string, index: number) => <div className="import-message warning" key={index}>{warning}</div>)}</div>}
     {result?.status === 'erro' && <div className="import-message error" role="alert"><strong>Não foi possível concluir a importação.</strong><div>Etapa: {result.failedStage ?? 'validação ou processamento'}.</div><div>{failureMessage}</div><div>A base anterior permanece preservada.</div></div>}

@@ -9,6 +9,7 @@ import { groupModules, moduleAdoptionLabel, moduleUseState, unitAdoptionLabel } 
 import { detailContext, findUnitById, makeDetailScope, type DetailScope } from '../domain/dashboard/detailScope';
 import { getPortfolioViewState } from '../domain/dashboard/viewState';
 import { getPortfolioMetrics } from '../domain/dashboard/portfolioMetrics';
+import { unitAdoptionSummaryRows } from '../domain/dashboard/unitAdoptionReport';
 import { AdoptionAnalyticsDashboard } from './AdoptionAnalyticsDashboard';
 
 type RealConsolidationDetail = { indicator: string; functionalId?: string | null; rule: string | null; criterion?: string | null; unitValues: Array<{ unitId: string | null; unitName: string | null; value: unknown; sourceValues?: unknown[]; numerator?: number | null; denominator?: number | null }>; consolidatedValue: unknown; status: string; reason?: string | null; numerator?: number | null; denominator?: number | null };
@@ -48,7 +49,25 @@ function ClassificationGuide({ score }: { score: number | null }) {
   </section>;
 }
 
-export function RealDashboard({ customers, processedAt, loadCustomer, loadModule, loading = false, error = null, onRetry, onImport, sidebarCollapsed, onToggleSidebar }: { customers: RealCustomer[]; processedAt?: string | null; loadCustomer?: (name: string) => Promise<RealCustomer>; loadModule?: (name: string, module: string, unitId?: string | null, unitName?: string | null) => Promise<RealModule>; loading?: boolean; error?: string | null; onRetry?: () => void; onImport?: () => void; sidebarCollapsed: boolean; onToggleSidebar: () => void }) {
+function AdoptionPrintReport({ customer, processedDate, scopeLabel, scopeKind, score, classification, modules, unitSummary }: { customer: RealCustomer; processedDate: string | null; scopeLabel: string; scopeKind: 'general' | 'unit'; score: number | null; classification: string | null; modules: RealModule[]; unitSummary: RealUnit[] }) {
+  const unitRows = unitAdoptionSummaryRows(unitSummary);
+  return <div className="adoption-print-document">
+    <section className="adoption-print-report" aria-label="Relatório de adoção dos módulos">
+      <header><strong>QuarkRH · Monitoramento de Uso</strong><h1>Análise de adoção dos módulos</h1></header>
+      <p><b>Cliente:</b> {customer.clienteNome ?? 'Cliente sem nome'}</p><p><b>Plano:</b> {planStatusText(customer)} · <b>Escopo:</b> {scopeLabel}</p>
+      <p><b>Emitido em:</b> {new Date().toLocaleString('pt-BR')} · <b>Dados processados:</b> {processedDate ?? 'Não informado'}</p>
+      <p><b>{scopeKind === 'unit' ? 'Adoção da unidade' : 'Adoção geral do escopo'}:</b> {scoreText(score)} · {classification ?? 'Dados insuficientes'} · {modules.filter((module) => module.contractStatus === 'contratado').length} módulos contratados</p>
+      {scopeKind === 'unit' && <p><b>Módulos considerados para adoção:</b> {modules.filter((module) => module.contractStatus === 'contratado').length}</p>}
+      <table><thead><tr><th>Módulo</th><th>Contratação</th><th>Utilização</th><th>Adoção</th><th>Classificação</th><th>Indicadores</th></tr></thead><tbody>{modules.map((module) => <tr key={module.name}><td>{module.name}</td><td>{contractText(module.contractStatus)}</td><td>{usageText(module)}</td><td>{moduleAdoptionLabel(module)}</td><td>{classifyAdoption(module.score) ?? 'Dados insuficientes'}</td><td>{(module.indicators ?? []).map((indicator) => `${indicator.label ?? indicator.id ?? 'Indicador'}: ${indicator.value == null ? 'Dados insuficientes' : String(indicator.value)} (${indicator.score == null ? 'sem pontuação' : `${formatAdoptionNumber(indicator.score)} pontos`})`).join('; ') || 'Sem indicadores detalhados'}</td></tr>)}</tbody></table>
+    </section>
+    {unitRows.length > 0 && <section className="adoption-unit-summary" aria-label="Adoção por unidade">
+      <h1>Adoção por unidade</h1>
+      <table><thead><tr><th>Unidade</th><th>Adoção</th><th>Classificação</th></tr></thead><tbody>{unitRows.map((unit, index) => <tr key={`${unit.unit}-${index}`}><td>{unit.unit}</td><td>{unit.adoption}</td><td>{unit.classification}</td></tr>)}</tbody></table>
+    </section>}
+  </div>;
+}
+
+export function RealDashboard({ customers, processedAt, loadCustomer, loadModule, loading = false, error = null, onRetry, onImport, initialDashboard = false, sidebarCollapsed, onToggleSidebar }: { customers: RealCustomer[]; processedAt?: string | null; loadCustomer?: (name: string) => Promise<RealCustomer>; loadModule?: (name: string, module: string, unitId?: string | null, unitName?: string | null) => Promise<RealModule>; loading?: boolean; error?: string | null; onRetry?: () => void; onImport?: () => void; initialDashboard?: boolean; sidebarCollapsed: boolean; onToggleSidebar: () => void }) {
   const [selectedClient, setSelectedClient] = useState<RealCustomer | null>(null);
   const [selectedModule, setSelectedModule] = useState<{ module: RealModule; scope: DetailScope } | null>(null);
   const [returnScope, setReturnScope] = useState<DetailScope>({ kind: 'consolidated' });
@@ -59,7 +78,7 @@ export function RealDashboard({ customers, processedAt, loadCustomer, loadModule
   const [categoryFilter, setCategoryFilter] = useState('');
   const [classificationFilter, setClassificationFilter] = useState('');
   const [activeOnly, setActiveOnly] = useState(true);
-  const [analyticsMode, setAnalyticsMode] = useState(false);
+  const [analyticsMode, setAnalyticsMode] = useState(initialDashboard);
   const [showInsufficientCustomers, setShowInsufficientCustomers] = useState(false);
   const sourcePopulation = useMemo(() => activeOnly ? customers.filter(customer => customer.active !== false) : customers, [customers, activeOnly]);
   const csms = useMemo(() => [...new Set(sourcePopulation.map(c => formatCsm(c.csm)))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [sourcePopulation]);
@@ -98,13 +117,22 @@ function RealClientView({ customer, processedDate, back, openModule, onImport, o
   const counts = groupModules(modules);
   const useLabel = (module: RealModule) => { const state = moduleUseState({ ...module, name: module.name, indicators: module.indicators }); return ({ utiliza: <><i aria-hidden="true">✓</i> Utilização confirmada</>, zero_conhecido: <><i aria-hidden="true">×</i> Utilização conhecida igual a zero</>, parcial: <><i aria-hidden="true">⚠</i> Parcial / dados insuficientes</>, sem_dado: <><i aria-hidden="true">—</i> Sem dado</> }[state]); };
   const adoptionLabel = (module: RealModule) => moduleAdoptionLabel(module);
+  const emitAdoptionPdf = () => {
+    const previousTitle = document.title;
+    const safeName = (customer.clienteNome ?? 'cliente').normalize('NFD').replace(/[\u0300-\u036f]/gu, '').replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase();
+    const safeUnitName = selectedUnit?.displayName.normalize('NFD').replace(/[\u0300-\u036f]/gu, '').replace(/[^a-z0-9]+/giu, '-').replace(/^-|-$/gu, '').toLowerCase();
+    document.title = `adocao-modulos-${safeName}${scope === 'unidades' && safeUnitName ? `-${safeUnitName}` : ''}-${new Date().toISOString().slice(0, 10)}`;
+    window.print();
+    window.setTimeout(() => { document.title = previousTitle; }, 1000);
+  };
   const open = (module: RealModule) => { void openModule(module, scope === 'unidades' ? selectedUnit?.unitId : null, scope === 'unidades' ? selectedUnit?.unitName : null); };
   return <><AppSidebar onHome={back} onDashboard={onDashboard} active={undefined} onImport={onImport ?? (() => {})} collapsed={sidebarCollapsed} onToggle={onToggleSidebar}/><main><header className="topbar client-detail-topbar"><div className="brand"><div className="brand-mark">Q</div><div><strong>QuarkRH</strong><span>Monitoramento de Uso</span></div></div><div className="top-title"><button className="icon-button" aria-label="Voltar à carteira" onClick={back}><ArrowLeft size={18}/></button><div><strong title={customer.clienteNome ?? undefined}>{customer.clienteNome ?? 'Cliente sem nome'}</strong><span>{processedDate ? `Dados processados em ${processedDate}` : 'Dados ainda não processados'}</span></div></div></header><div className="content detail-content">
     <div className="breadcrumbs"><button onClick={back}>Carteira</button><ChevronRight size={14}/><span>{customer.clienteNome ?? 'Cliente sem nome'}</span></div>
     {customer.sourceConflicts?.length ? <section className="source-conflicts-panel" aria-label="Divergências cadastrais entre listas ClickUp"><strong>A Base de Clientes RH prevalece; divergências preservadas para revisão</strong><ul>{customer.sourceConflicts.map((conflict, index) => <li key={`${conflict.field}-${index}`}><b>{({ plan: 'Plano', csm: 'CSM', journey: 'Jornada', signedAt: 'Data de assinatura', mrr: 'MRR', category: 'Categoria RH', goLiveAt: 'Data de virada' } as Record<string, string>)[conflict.field] ?? conflict.field}:</b> Base: {JSON.stringify(conflict.activeValue) ?? 'não informado'} · CHURN: {conflict.churnValues.map(value => JSON.stringify(value) ?? 'não informado').join(', ')}</li>)}</ul></section> : null}
 <section className="client-hero"><div className="hero-client"><div className="hero-avatar">{initials(customer.clienteNome ?? 'Cliente')}</div><div><p className="eyebrow">CLIENTE · DADOS PROCESSADOS</p><h1>{customer.clienteNome ?? 'Cliente sem nome'}</h1><div className="hero-meta"><Badge>{planStatusText(customer)}</Badge><span>CSM: {formatCsm(customer.csm)}</span><span>Jornada: {customer.journey ?? 'Não informado'}</span><span>MRR: {formatMrr(customer.mrr)}</span><span>Categoria: {customer.category || 'Não informado'}</span><span>Data de assinatura: {formatSignatureDate(customer.signedAt)}</span><span>{customer.unitCount ?? 0} unidade(s)</span></div></div></div><div className="hero-score"><span>{scope === 'unidades' ? 'Adoção da unidade' : 'Adoção geral'}</span><strong>{scoreText(score)}</strong>{classification && <Badge tone={tone(classification)}>{classification}</Badge>}<Progress score={score}/>{score === null && <small>{scope === 'unidades' ? selectedUnit?.overallScoreReason : customer.overallScoreReason ?? 'Sem score geral calculável.'}</small>}</div></section>
     <div className="client-summary">{counts.map((item) => <button key={item.title} className="client-summary-card" onClick={() => setSelectedGroup(item)}><span>{item.title}</span><strong>{item.list.length}</strong><small>Ver módulos</small></button>)}</div>
-    <div className="summary-actions"><button className="secondary-button" aria-expanded={showTable} onClick={() => setShowTable((visible) => !visible)}>{showTable ? 'Ocultar detalhes' : 'Ver mais detalhes'}</button></div>
+    <div className="summary-actions"><button className="secondary-button" aria-expanded={showTable} onClick={() => setShowTable((visible) => !visible)}>{showTable ? 'Ocultar detalhes' : 'Ver mais detalhes'}</button><button className="primary-button" type="button" disabled={scope === 'unidades' && !selectedUnit} onClick={emitAdoptionPdf}>Emitir PDF</button></div>
+    <AdoptionPrintReport customer={customer} processedDate={processedDate} scopeLabel={scope === 'unidades' ? selectedUnit?.displayName ?? 'Selecione uma unidade' : 'Matriz Geral'} scopeKind={scope === 'unidades' ? 'unit' : 'general'} score={score} classification={classification} modules={modules} unitSummary={scope === 'geral' ? customer.units ?? [] : []}/>
     <div className="filter-bar client-scope-tabs"><button className={scope === 'geral' ? 'primary-button' : 'secondary-button'} onClick={() => { setScope('geral'); setSelectedUnit(null); }}>Matriz Geral</button><button className={scope === 'unidades' ? 'primary-button' : 'secondary-button'} onClick={() => { setScope('unidades'); setSelectedUnit(null); }}>Unidades</button><span>{customer.unitCount ?? 0} unidade(s)</span></div>
     {scope === 'unidades' && <div className="module-grid unit-picker">{(customer.units ?? []).map((unit) => { const unitClass = classifyAdoption(unit.overallScore); return <button className="module-card unit-card" key={unit.unitId ?? unit.unitName} onClick={() => setSelectedUnit(unit)}><strong>{unitAdoptionLabel(unit.displayName, unit.overallScore)}</strong><Badge tone={tone(unitClass)}>{unitClass ?? 'Dados insuficientes'}</Badge><Progress score={unit.overallScore}/></button>; })}</div>}
     <div className="section-heading"><div><p className="eyebrow">MATRIZ DE ADOÇÃO</p><h2>{scope === 'unidades' ? selectedUnit ? 'Módulos · ' + selectedUnit.displayName : 'Selecione uma unidade' : 'Matriz Geral · todos os módulos'}</h2></div><span className="section-note">{modules.length} módulos · contratação e uso separados</span></div>
