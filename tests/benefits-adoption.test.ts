@@ -58,6 +58,3 @@ const nonContractCustomer = integrated.customers.find((customer) => customer.cli
 if (nonContractCustomer.modules.find((module) => module.name === 'Benefícios')?.score !== null || nonContractCustomer.overallScore !== null) throw new Error('Non-contracted Benefits must remain out of overallScore');
 
 console.log('Benefits adoption tests passed: all component boundaries, zero/null, retained counts, SUM, isolated unit scores and contract');
-
-
-

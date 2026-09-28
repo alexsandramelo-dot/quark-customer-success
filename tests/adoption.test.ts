@@ -20,4 +20,3 @@ const seasonal = calculateAdoptionModule('Férias', {}, true);
 if (seasonal.temporalType !== 'SAZONAL') throw new Error('Metadado sazonal não preservado.');
 
 console.log('Adoption matrix tests passed: 6 scenarios');
-
